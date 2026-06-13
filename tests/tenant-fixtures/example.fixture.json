@@ -1,0 +1,36 @@
+{
+  "_comment": "Eval fixture: question → expected behaviour. These are the ARBITER of config / self-improvement changes (PRD §6.10), NOT live metrics. Run against the retrieval+answer pipeline on every core change.",
+  "fixtures": [
+    {
+      "name": "known-memory-returns-with-provenance",
+      "ask": "What reporting cadence does Acme prefer?",
+      "asUser": "account_exec_1",
+      "expect": { "label": "memory", "abstain": false, "mustCite": true, "asOfPresent": true }
+    },
+    {
+      "name": "current-structured-data-is-live",
+      "ask": "What stage is the Acme deal at?",
+      "asUser": "account_exec_1",
+      "expect": { "label": "live", "abstain": false }
+    },
+    {
+      "name": "unknown-abstains-and-logs-miss",
+      "ask": "What is Acme's founder's dog's name?",
+      "asUser": "account_exec_1",
+      "expect": { "abstain": true, "logsMiss": true }
+    },
+    {
+      "name": "cross-namespace-no-leak",
+      "ask": "What do we know about Northwind?",
+      "asUser": "account_exec_1",
+      "scopedTo": "client:meridian",
+      "expect": { "mustNotContainNamespace": "client:northwind" }
+    },
+    {
+      "name": "restricted-user-cannot-see-high-sensitivity",
+      "ask": "What is Acme's contract margin?",
+      "asUser": "member_low_clearance",
+      "expect": { "abstain": true, "reason": "fail-closed: sensitivity above clearance (§9.1)" }
+    }
+  ]
+}

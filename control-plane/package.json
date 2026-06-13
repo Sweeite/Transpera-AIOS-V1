@@ -1,0 +1,17 @@
+{
+  "name": "@aios/control-plane",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Provisioning/migration SCRIPTS (built now). Operator dashboard UI is deferred (Brief §8.4).",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "provision": "tsx src/provision-client.ts",
+    "migrate-all": "tsx src/migrate-all.ts",
+    "deploy-all": "tsx src/deploy-all.ts"
+  },
+  "dependencies": {
+    "@aios/shared": "workspace:*"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "aios",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AIOS — a durable, queryable, permission-safe organisational brain. Sealed shared core + per-client plugins. See AIOS_Brief.md.",
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "dev:api": "pnpm --filter @aios/api dev",
+    "dev:worker": "pnpm --filter @aios/worker dev",
+    "provision": "pnpm --filter @aios/control-plane provision",
+    "migrate:all": "pnpm --filter @aios/control-plane migrate-all",
+    "deploy:all": "pnpm --filter @aios/control-plane deploy-all"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "tsx": "^4.16.0",
+    "vitest": "^2.0.0"
+  }
+}

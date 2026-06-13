@@ -1,0 +1,17 @@
+{
+  "name": "@aios/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@aios/core": "workspace:*",
+    "@aios/shared": "workspace:*"
+  }
+}

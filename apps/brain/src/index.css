@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+/*
+ * shadcn/ui design tokens (Tailwind v4). `npx shadcn@latest init` fills the full light+dark set;
+ * this is a minimal working subset so the app renders before the CLI is run.
+ * prompt-kit components consume these same tokens — one theme across chat + dashboards (tech-stack §1).
+ */
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --border: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --radius: 0.625rem;
+
+  /* AIOS provenance palette — the four honest-answering labels (Brief §6). General-inference is visually distinct. */
+  --prov-memory: oklch(0.62 0.13 155);        /* "I know this" — green */
+  --prov-live: oklch(0.62 0.14 245);          /* "This is live" — blue */
+  --prov-failed: oklch(0.70 0.12 70);         /* "Couldn't reach source" — amber */
+  --prov-inference: oklch(0.556 0 0);         /* "General inference" — muted/dashed, never a business fact */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-prov-memory: var(--prov-memory);
+  --color-prov-live: var(--prov-live);
+  --color-prov-failed: var(--prov-failed);
+  --color-prov-inference: var(--prov-inference);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}

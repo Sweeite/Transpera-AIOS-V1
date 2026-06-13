@@ -1,0 +1,21 @@
+{
+  "name": "@aios/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "THE SEALED ENGINE. Never knows a client exists. Extended only via hooks/registry (Brief §8.2).",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aios/shared": "workspace:*"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "*",
+    "zod": "*"
+  }
+}
