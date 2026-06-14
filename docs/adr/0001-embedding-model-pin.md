@@ -70,6 +70,16 @@ Harness: `tests/eval/embedding-bakeoff/` — **outside `packages/core`**, raw `f
 - ✅ Floors differ by model on identical questions (0.552 / 0.584 / 0.608) — concrete proof the floor is model-specific (why #14 must re-derive).
 - ❌ **Does NOT pick a model.** Ranking is at the ceiling (synthetic saturation); OpenAI's perfect scores are an artifact of easy data, not a quality win. Voyage's distribution overlap on 30 easy pairs is "interesting," not disqualifying.
 
+## Real-data data points (accumulate here as they appear)
+
+- **2026-06-14 (#4, first real-data signal):** the first time the provisional **0.608** floor met genuine
+  `text-embedding-3-large@1024/float` vectors. A legitimate **paraphrase** of an uploaded SOP (same meaning,
+  different words) scored **0.6204** — clearing the floor by only **~0.012**. An off-topic query scored
+  **0.0492** (abstains cleanly). Read: the synthetic floor sits **at the edge of real paraphrases** — a
+  slightly looser paraphrase would fall below it, so 0.608 is **likely a touch high** for real content. Not a
+  bug, not tuned away (one example must never move the floor — the calibration-set==test-set trap); logged as
+  a signal for the #43 re-derivation. Captured by `tests/core/retrieve.integration.test.ts` (key-gated).
+
 ## Deferred decision (the real one) — owned by #43
 
 Before the first client's data accumulates, run the bake-off on **their de-identified real content** and
