@@ -15,6 +15,7 @@
     "test:core": "vitest run tests/core",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "ask:sop": "tsx scripts/answer.ts",
+    "ask": "tsx scripts/ask.ts",
     "lint": "pnpm -r lint",
     "dev:api": "pnpm --filter @aios/api dev",
     "dev:worker": "pnpm --filter @aios/worker dev",
