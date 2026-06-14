@@ -3,11 +3,11 @@
  */
 import { createHash } from 'node:crypto';
 import type { Memory, Namespace, Provenance, SensitivityLevel, Zone } from '@aios/shared';
-import { embed as gatewayEmbed, EMBEDDING_MODEL, EMBEDDING_VERSION } from '../harness/gateway.js';
+import { embed as gatewayEmbed, EMBEDDING_MODEL, EMBEDDING_VERSION, type Embedder } from '../harness/gateway.js';
 
-/** A function that turns texts into pinned-dimension vectors. Defaults to gateway.embed (the ONLY producer);
- *  injectable so the write path is testable hermetically without a network call. */
-export type Embedder = (texts: string[]) => Promise<number[][]>;
+// `Embedder` now lives next to `embed` in the gateway (the read path needs it too); re-exported here so
+// existing callers/tests importing it from the store keep working.
+export type { Embedder };
 
 /** Minimal DB executor — matches both pglite (tests) and the real pooled connection (#7 wires getDb()). */
 export type QueryFn = (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;

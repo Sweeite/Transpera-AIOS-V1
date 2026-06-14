@@ -40,9 +40,26 @@ export const KNOWN_KEYS: ConfigKeySpec[] = [
   { key: 'embedding_canary_drift_threshold', default: 0.02, min: 0.001, max: 0.2, qualityAffecting: false }, // mean cosine drift over the probe set that trips the alarm (#45)
 ];
 
+/**
+ * The DECLARED default for a key — a pure, no-DB resolver. Used until `getConfig()`'s scope-aware DB
+ * resolution lands, so callers read a bounded, declared key instead of a literal ("no magic numbers", §4.8).
+ *
+ * ⚠ CARRY-FORWARD: when `getConfig()` is implemented, callers switch to `deps.x ?? await getConfig(key, ns)`
+ *   (client override → org default); `defaultFor` remains the static fallback and the value getConfig clamps
+ *   toward. Throws on an undeclared key — an undeclared threshold is a bug, never a silent 0.
+ */
+export function defaultFor(key: string): number | string {
+  const spec = KNOWN_KEYS.find((k) => k.key === key);
+  if (!spec) {
+    throw new Error(`unknown config key '${key}' — declare it in KNOWN_KEYS (no undeclared thresholds, §4.8)`);
+  }
+  return spec.default;
+}
+
 /** Resolution order: client override → org default (§4.8). Range-validated. */
 export async function getConfig(_key: string, _namespace?: Namespace): Promise<number | string> {
-  // TODO: read system_config with scope resolution; clamp to bounds.
+  // TODO: read system_config with scope resolution; clamp to bounds. Until then, `defaultFor(key)` above
+  // gives the static declared default (no DB).
   throw new Error('TODO: getConfig');
 }
 

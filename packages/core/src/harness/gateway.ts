@@ -6,6 +6,14 @@ import type { TraceSpan } from '@aios/shared';
 
 export type TaskClass = 'classify' | 'summarise' | 'extract' | 'reason' | 'synthesize';
 
+/**
+ * A function that turns texts into pinned-dimension vectors. `embed` (below) is the ONLY producer in
+ * production; this type is exported so BOTH the write path (memory/store) and the read path (harness/
+ * retrieval) can inject a deterministic stand-in in hermetic tests, without a network call. Defined here —
+ * next to `embed` — so neither path imports an embedding type from the other (no layering inversion).
+ */
+export type Embedder = (texts: string[]) => Promise<number[][]>;
+
 export interface CallOptions {
   taskClass: TaskClass; // drives multi-provider routing (cheap vs strong), quality-gated by eval fixtures
   system?: string; // stable prefix → prompt-cached (~90% off cached input tokens, §5.3)
