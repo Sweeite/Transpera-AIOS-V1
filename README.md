@@ -8,8 +8,10 @@ perishable knowledge in people's heads, answers with honest provenance, and runs
 1. **[AIOS_Brief.md](AIOS_Brief.md)** — canonical product & architecture brief (the spine; everything derives from it).
 2. **[AIOS_PRD.md](AIOS_PRD.md)** — buildable requirements, with the AI harness specced in depth.
 3. **[AIOS_TechStack_Scaffolding.md](AIOS_TechStack_Scaffolding.md)** — stack, monorepo, build order, and §5 stack-limits/economics/ops.
-4. **[AIOS_Issues.md](AIOS_Issues.md)** — the build broken into GitHub-ready issues, mapped to the build order.
-5. `AIOS_prototype.html` — rough UI canvas (to be reshaped to the settled spec).
+4. **[AIOS_Issues.md](AIOS_Issues.md)** — the build broken into GitHub-ready issues (each carrying its inline audit fix), plus the audit-remediation reference.
+5. **[AIOS_QA_Playbook.md](AIOS_QA_Playbook.md)** — how we prove each issue/milestone is built right; adversarial reviews, seam gates, and the final behavioural grill.
+6. `AIOS_Explainer.html` — plain-language visual explainer (agents / memory / ingestion).
+7. `AIOS_prototype.html` — rough UI canvas (superseded by the real `apps/brain` slice).
 
 ## Architecture in one breath (Brief §8.2 — three layers of separation)
 
