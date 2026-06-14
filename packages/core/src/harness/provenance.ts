@@ -75,8 +75,10 @@ export function labelAnswer(args: LabelAnswerArgs): Answer {
   const byId = new Map<string, RetrievedMemory>(retrieval.memories.map((m) => [m.id, m]));
 
   const claims: Claim[] = draftClaims.map((draft) => {
-    if (draft.sourceId === undefined) {
-      // Uncited → general inference by exclusion. (Easy-to-detect grounding: no citation ⇒ not a business fact.)
+    if (!draft.sourceId) {
+      // Uncited → general inference by exclusion. `!sourceId` covers undefined, '', and null (a model emitting
+      // an EMPTY citation is "no citation", NOT a fabricated one) — so it must NOT trip the fabrication signal.
+      // (Easy-to-detect grounding: no citation ⇒ not a business fact.)
       return { text: draft.text, label: GENERAL_INFERENCE };
     }
 
@@ -105,10 +107,15 @@ export function shouldAbstain(score: number, floor: number): boolean {
   return score < floor;
 }
 
+/** What a memory claim renders as when its human source ref can't be resolved — NEVER a raw uuid (a uuid is
+ *  not a "source" a user can act on, and leaking the internal id reads as provenance theatre). */
+const SOURCE_UNAVAILABLE = 'source unavailable';
+
 /**
  * Human-readable render of a labelled Answer — the answer surface (used by the demo + later the UI).
  * Abstained ⇒ the honest copy. Memory claims resolve their sourceId → the real source ref + as-of (the trust
- * pitch — show the document, not a uuid). General inference is visually distinct and never shows a source.
+ * pitch — show the DOCUMENT, never the uuid). If `retrieval` is omitted, or the id no longer resolves to a
+ * source ref, we render "source unavailable" rather than expose the raw id. General inference shows no source.
  */
 export function renderAnswer(answer: Answer, retrieval?: RetrieveOutcome): string {
   if (answer.abstained) return ABSTENTION_COPY;
@@ -119,7 +126,8 @@ export function renderAnswer(answer: Answer, retrieval?: RetrieveOutcome): strin
     .map((c) => {
       if (c.label === MEMORY) {
         const source = c.sourceId ? byId.get(c.sourceId) : undefined;
-        const ref = source?.provenance?.sourceRefs?.[0] ?? c.sourceId ?? 'unknown source';
+        // Resolve to a HUMAN ref only; a missing retrieval arg or unresolved id ⇒ "source unavailable", never the uuid.
+        const ref = source?.provenance?.sourceRefs?.[0] ?? SOURCE_UNAVAILABLE;
         const asOf = c.asOf ? `, as of ${c.asOf.slice(0, 10)}` : '';
         return `✔ I know this — ${c.text}\n    └─ source: ${ref}${asOf}`;
       }

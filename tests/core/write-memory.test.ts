@@ -169,6 +169,44 @@ describe('writeMemory() happy path (#3)', () => {
   });
 });
 
+describe('writeMemory() fail-closed guards (M0 gate)', () => {
+  it('SF5: refuses a write whose provenance has no trustLevel — fail-closed against unrated sources (anti-poisoning §5)', async () => {
+    const { query } = await freshDb();
+    const { embed, calls } = fakeEmbedder();
+    // A caller that forgot to stamp trustLevel (or the '{}' jsonb default leaking in) must be REJECTED, not
+    // silently treated as trusted. Cast through unknown because the type requires trustLevel — runtime is the risk.
+    const badProv = { sourceRefs: ['upload://x.pdf'], capturedAt: '2026-06-14T00:00:00.000Z' } as unknown as Provenance;
+
+    await expect(
+      writeMemory(query, { type: 'semantic', namespace: 'org', zone: 'general', sensitivityLevel: 1, statement: 's', provenance: badProv }, { embed }),
+    ).rejects.toThrow(/trustLevel/);
+    expect(calls).toHaveLength(0); // failed loud BEFORE embedding — no provider spend, no row
+    expect((await query(`SELECT count(*)::int AS n FROM memories`)).rows[0].n).toBe(0);
+  });
+
+  it('SF4: flags typeConflict when a dedup re-upload declares a DIFFERENT type — stored type kept, not silently swallowed', async () => {
+    const { query } = await freshDb();
+    const { embed } = fakeEmbedder();
+    const statement = 'The same text can be stored under one type only.';
+    const base = { namespace: 'org' as const, zone: 'general', sensitivityLevel: 1 as const, statement, provenance: PROV };
+
+    const first = await writeMemory(query, { ...base, type: 'semantic' }, { embed });
+    expect(first.deduped).toBe(false);
+    expect(first.typeConflict).toBe(false); // fresh write — never a conflict
+
+    // Same text, same namespace, DIFFERENT type → deduped onto the stored row; the type change is surfaced.
+    const asProcedural = await writeMemory(query, { ...base, type: 'procedural' }, { embed });
+    expect(asProcedural.deduped).toBe(true);
+    expect(asProcedural.typeConflict).toBe(true);
+    expect(asProcedural.memory.type).toBe('semantic'); // stored type unchanged (a type change is supersession, #12)
+
+    // Same text, SAME type → deduped with no type conflict.
+    const sameType = await writeMemory(query, { ...base, type: 'semantic' }, { embed });
+    expect(sameType.deduped).toBe(true);
+    expect(sameType.typeConflict).toBe(false);
+  });
+});
+
 describe('memories schema additions (#3 migration 0002)', () => {
   it('persists type with a CHECK that excludes non-persistable working memory (§4.1)', async () => {
     const { query } = await freshDb();

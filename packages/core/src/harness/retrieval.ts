@@ -12,9 +12,13 @@
  *   so no caller of `retrieve()` changes when the reranker drops in (the Watch).
  *
  * DEFERRED seams (documented, do NOT pre-build):
- *   #13 — the permission predicate (clearance + namespace) REPLACES the `'true'` default below; chunks are
- *         then searched with the IDENTICAL predicate (§9.1). retrieve() stays ONE SQL query — the filter is
- *         in the WHERE clause, never an app-layer post-filter (retrieve-then-filter is the fail-OPEN shape).
+ *   #13 — the permission predicate (clearance + namespace) REPLACES the `'true'` default below. The fragment
+ *         is built by `rbac.retrievalWhereSql(buildRetrievalPredicate(...), 3)` — it carries PARAMS, so the
+ *         caller MUST pass BOTH `predicate` (the SQL fragment) AND `predicateParams` (its bound values), which
+ *         retrieve() threads after the vector ($1) and limit ($2), i.e. the fragment numbers from $3. Chunks
+ *         are searched with the IDENTICAL predicate (§9.1). retrieve() stays ONE SQL query — the filter is in
+ *         the WHERE clause, never an app-layer post-filter (retrieve-then-filter is the fail-OPEN shape). The
+ *         HIT/DENY/denyAll behaviour of this seam is locked by retrieval-where-seam.test.ts.
  *   #14 — a reranker scores top-N; swap the body of `abstentionScore()` and re-derive the floor (different
  *         scale). The floor compare and every caller are untouched.
  *   getConfig — the floor/limit come from `defaultFor()` (the static declared default) until DB-scoped
@@ -65,6 +69,9 @@ export interface RetrieveDeps {
   floor?: number; // retrieval_min_relevance (bounded key); default: defaultFor(...) — the provisional 0.608.
   maxResults?: number; // retrieval_max_results (bounded key); default: defaultFor(...) — 20.
   predicate?: string; // #13 SEAM: a parameterised SQL WHERE fragment over columns only. Default 'true' (no-op).
+  predicateParams?: unknown[]; // #13 SEAM: the values bound by `predicate`'s placeholders ($3, $4, … — they
+  //                              number from $3 because $1 is the query vector and $2 is the limit). Without
+  //                              this, a predicate with placeholders would be a LIE (no params to bind). Default [].
   logMiss?: MissLogger; // default: INSERT into retrieval_misses.
 }
 
@@ -114,6 +121,7 @@ export async function retrieve(queryText: string, deps: RetrieveDeps): Promise<R
   const floor = deps.floor ?? (defaultFor('retrieval_min_relevance') as number);
   const maxResults = deps.maxResults ?? (defaultFor('retrieval_max_results') as number);
   const predicate = deps.predicate ?? 'true'; // #13 replaces this default with the clearance+namespace fragment
+  const predicateParams = deps.predicateParams ?? []; // the values bound by `predicate` ($3, $4, …); [] for the no-op
   const logMiss = deps.logMiss ?? defaultLogMiss;
 
   // The query embedding goes through the gateway chokepoint (#46) — the SAME pinned model/dim/version as the
@@ -123,8 +131,9 @@ export async function retrieve(queryText: string, deps: RetrieveDeps): Promise<R
     throw new Error('embed returned no vector for the query (refusing to search a null embedding)');
   }
 
-  // ONE query: filter (predicate) → rank (`<=>` cosine distance) → cap. NEVER retrieve-then-filter (#13 just
-  // swaps `true` for the permission fragment; the param placeholders it adds start AFTER $1/$2 used here).
+  // ONE query: filter (predicate) → rank (`<=>` cosine distance) → cap. NEVER retrieve-then-filter. #13 passes
+  // BOTH `predicate` (a fragment numbering from $3) AND `predicateParams` (its bound values) — appended after
+  // the vector ($1) and limit ($2) so the placeholders line up. The default 'true' / [] is the no-op seam.
   const { rows } = await deps.query(
     `SELECT id, namespace, zone, sensitivity_level, type, statement, content_hash, provenance,
             embedding_model, embedding_version, created_at,
@@ -133,7 +142,7 @@ export async function retrieve(queryText: string, deps: RetrieveDeps): Promise<R
       WHERE ${predicate}
       ORDER BY embedding <=> $1::vector
       LIMIT $2`,
-    [`[${queryVec.join(',')}]`, maxResults],
+    [`[${queryVec.join(',')}]`, maxResults, ...predicateParams],
   );
 
   const ranked: RetrievedMemory[] = rows.map((r) => ({

@@ -140,3 +140,37 @@ describe('labelAnswer() abstention path (#5, honest M0 copy)', () => {
     expect(out).toContain('2026-02-01'); // the as-of date
   });
 });
+
+describe('labelAnswer() / renderAnswer() M0-gate hardening', () => {
+  it('SF6: an EMPTY or null citation is uncited (general-inference) and does NOT fire the fabrication signal', () => {
+    const retrieval = hit([mem('mem-1', 'x', prov('upload://x.pdf', '2026-02-01T00:00:00.000Z'))]);
+    const signals: Array<{ claimText: string; citedId: string }> = [];
+
+    const answer = labelAnswer({
+      draftClaims: [
+        { text: 'empty-string citation' } as any,
+        { text: 'null citation', sourceId: null } as any,
+        { text: 'empty-string explicit', sourceId: '' } as any,
+      ],
+      retrieval,
+      onFabricatedCitation: (i) => signals.push(i),
+    });
+
+    for (const c of answer.claims) {
+      expect(c.label).toBe('general-inference');
+      expect(c.sourceId).toBeUndefined();
+    }
+    expect(signals).toEqual([]); // empty/null is "no citation", NOT a fabricated one — never signalled
+  });
+
+  it('SF7: renderAnswer NEVER prints a raw uuid as a source — unresolvable id ⇒ "source unavailable"', () => {
+    const retrieval = hit([mem('mem-1', 'Create the workspace.', prov('upload://x.pdf', '2026-02-01T00:00:00.000Z'))]);
+    const answer = labelAnswer({ draftClaims: [{ text: 'Create the workspace.', sourceId: 'mem-1' }], retrieval });
+
+    // Render WITHOUT the retrieval arg: the id can't resolve to a human ref → must not leak the uuid.
+    const out = renderAnswer(answer);
+    expect(out).toMatch(/I know this/i);
+    expect(out).toContain('source unavailable');
+    expect(out).not.toContain('mem-1'); // the raw id is never surfaced as the source
+  });
+});

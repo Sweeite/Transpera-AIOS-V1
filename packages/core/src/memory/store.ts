@@ -50,6 +50,13 @@ export interface WriteResult {
    * LOUD so a more-restrictive re-upload can't silently under-classify (over-sharing, principle #2).
    */
   labelConflict: boolean;
+  /**
+   * true ⇒ a dedup hit where the incoming `type` differs from the STORED row's type (e.g. the same text was
+   * first written as 'semantic' and is now re-uploaded as 'procedural'). The stored type is NOT changed here
+   * (a type change is a supersession, #12) — but we surface it rather than silently returning a row of a
+   * different type than the caller asked for (no silent failure). Always false on a fresh write.
+   */
+  typeConflict: boolean;
 }
 
 /** Normalise before hashing so trivial whitespace/case differences dedup (§5 tier-1 exact-dup guard). */
@@ -96,6 +103,18 @@ export async function writeMemory(
   opts: { embed?: Embedder } = {},
 ): Promise<WriteResult> {
   const embed = opts.embed ?? gatewayEmbed;
+
+  // FAIL-CLOSED on provenance (anti-poisoning, §5): trustLevel gates promotion to semantic. A missing/garbage
+  // trustLevel (e.g. the '{}' jsonb default, or a caller that forgot to stamp it) must NOT slip through as an
+  // implicit "trusted" write — refuse it loudly rather than poison the vector space with an unrated source.
+  const trust = input.provenance?.trustLevel;
+  if (trust !== 'high' && trust !== 'low') {
+    throw new Error(
+      `writeMemory: provenance.trustLevel must be 'high' or 'low' (got ${JSON.stringify(trust)}) — ` +
+        'refusing a fail-open write with an unrated source (anti-poisoning, §5).',
+    );
+  }
+
   const contentHash = contentHashOf(input.statement);
 
   // Namespace-scoped dedup: if an identical row already exists, skip the write AND the embed entirely.
@@ -111,7 +130,8 @@ export async function writeMemory(
     // under-classification (over-sharing, principle #2). Fail-closed posture in the interim.
     const stored = rowToMemory(existing.rows[0]);
     const labelConflict = input.sensitivityLevel > stored.sensitivityLevel || input.zone !== stored.zone;
-    return { memory: stored, deduped: true, labelConflict };
+    const typeConflict = input.type !== stored.type; // same text, different type ⇒ surfaced, not silently swallowed
+    return { memory: stored, deduped: true, labelConflict, typeConflict };
   }
 
   // First real provider call goes through the gateway chokepoint (#46). One statement in → one vector out.
@@ -136,7 +156,7 @@ export async function writeMemory(
       `[${embedding.join(',')}]`,
     ],
   );
-  return { memory: rowToMemory(inserted.rows[0]), deduped: false, labelConflict: false };
+  return { memory: rowToMemory(inserted.rows[0]), deduped: false, labelConflict: false, typeConflict: false };
 }
 
 export interface IngestSopInput {
@@ -186,6 +206,13 @@ export async function ingestSop(
       `[ingestSop] label conflict on dedup — restriction NOT applied (see #12): ` +
         `source=${input.sourceRef} requested zone=${input.zone ?? 'general'}/s${input.sensitivityLevel ?? 1} ` +
         `but stored memory ${result.memory.id} is zone=${result.memory.zone}/s${result.memory.sensitivityLevel}`,
+    );
+  }
+  if (result.typeConflict) {
+    // The same text already exists as a DIFFERENT type — surfaced, never silently returned as 'procedural'.
+    console.warn(
+      `[ingestSop] type conflict on dedup — stored type kept (see #12): ` +
+        `source=${input.sourceRef} requested type=procedural but stored memory ${result.memory.id} is type=${result.memory.type}`,
     );
   }
   return result;

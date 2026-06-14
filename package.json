@@ -10,7 +10,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test",
+    "test": "vitest run",
+    "test:packages": "pnpm -r test",
     "test:core": "vitest run tests/core",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "ask:sop": "tsx scripts/answer.ts",
