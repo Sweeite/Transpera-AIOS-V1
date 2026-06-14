@@ -31,6 +31,27 @@ export function buildRetrievalPredicate(c: Clearance, namespaces: Namespace[]): 
   };
 }
 
+/**
+ * Compile a retrieval predicate into a parameterised SQL WHERE fragment — the ONE filter applied
+ * identically to `memories` AND `chunks` (§9.1). It references columns only (no table name), so the same
+ * fragment slots into `FROM memories WHERE …` and `FROM chunks WHERE …` — that identity is the leak guard.
+ *
+ * FAIL-OPEN TRAP (§3.2, #9): `denyAll` ⇒ literal `false`. We use `= ANY($n)` (not `IN (…)`) so an empty
+ * list could never silently widen to "everything"; `denyAll` already short-circuits before we get there,
+ * but ANY keeps the floor doubly safe. Parameters are 1-indexed from `startParam` (default 1).
+ */
+export function retrievalWhereSql(
+  pred: ReturnType<typeof buildRetrievalPredicate>,
+  startParam = 1,
+): { sql: string; params: unknown[] } {
+  if (pred.denyAll) return { sql: 'false', params: [] };
+  const [z, s, n] = [startParam, startParam + 1, startParam + 2];
+  return {
+    sql: `zone = ANY($${z}) AND sensitivity_level <= $${s} AND namespace = ANY($${n})`,
+    params: [pred.zones, pred.maxSensitivity, pred.namespaces],
+  };
+}
+
 /** Action authorization = intersection(agent allowed tools, principal permissions) (§9.2). */
 export function canPerformAction(_principal: Principal, _toolName: string, _allowedTools: string[]): boolean {
   // TODO: external-irreversible actions also require a confirmation gate at the call site (§9.2).

@@ -11,6 +11,8 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
+    "test:core": "vitest run tests/core",
+    "seed:demo": "tsx scripts/seed-demo.ts",
     "lint": "pnpm -r lint",
     "dev:api": "pnpm --filter @aios/api dev",
     "dev:worker": "pnpm --filter @aios/worker dev",
@@ -19,6 +21,7 @@
     "deploy:all": "pnpm --filter @aios/control-plane deploy-all"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.3.16",
     "@types/node": "^20",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0",
