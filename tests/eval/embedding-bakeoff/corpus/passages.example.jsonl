@@ -1,0 +1,3 @@
+{"id": "p001", "type": "semantic", "namespace": "client:acme", "zone": "general", "text": "ILLUSTRATIVE ONLY — replace with real de-identified content. Acme prefers monthly reporting, delivered async over email rather than on calls."}
+{"id": "p002", "type": "semantic", "namespace": "client:northwind", "zone": "general", "text": "ILLUSTRATIVE ONLY. Northwind prefers weekly reporting on a Monday standup call — the near-duplicate-but-opposite distractor to p001."}
+{"id": "p003", "type": "procedural", "namespace": "org", "zone": "general", "text": "ILLUSTRATIVE ONLY. SOP: how we onboard a retainer client — kickoff call, access provisioning, first 30-day plan."}

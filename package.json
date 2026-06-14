@@ -19,8 +19,9 @@
     "deploy:all": "pnpm --filter @aios/control-plane deploy-all"
   },
   "devDependencies": {
-    "typescript": "^5.5.0",
+    "@types/node": "^20",
     "tsx": "^4.16.0",
+    "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   }
 }

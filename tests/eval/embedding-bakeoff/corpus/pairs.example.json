@@ -1,0 +1,9 @@
+{
+  "_comment": "ILLUSTRATIVE ONLY — shape, not the real eval set. Copy to pairs.json (gitignored) and fill with ~30 real pairs per SCHEMA.md.",
+  "pairs": [
+    { "name": "acme-reporting-cadence", "query": "How often does Acme want to be updated, and how?", "gold": ["p001"] },
+    { "name": "northwind-vs-acme-no-bleed", "query": "What is Northwind's reporting preference?", "gold": ["p002"] },
+    { "name": "retainer-onboarding-sop", "query": "What's our process for bringing on a new retainer client?", "gold": ["p003"] },
+    { "name": "unknown-abstains", "query": "What is Acme's founder's dog's name?", "gold": [] }
+  ]
+}

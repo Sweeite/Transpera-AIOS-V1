@@ -1,0 +1,6 @@
+{
+  "name": "@aios/embedding-bakeoff",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway eval tooling for Issue #1 — pick + pin the embedding model/dim/dtype. Not part of the sealed core."
+}

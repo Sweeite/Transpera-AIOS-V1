@@ -1,0 +1,6 @@
+# Real/synthetic corpus, vendor keys, and computed artifacts — never committed (only *.example.* + SCHEMA.md are).
+corpus/passages.jsonl
+corpus/pairs.json
+corpus/.cache/
+results.md
+.env

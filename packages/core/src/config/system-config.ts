@@ -14,7 +14,11 @@ export interface ConfigKeySpec {
 
 /** A few load-bearing keys (full set lives in the DB). */
 export const KNOWN_KEYS: ConfigKeySpec[] = [
-  { key: 'retrieval_min_relevance', default: 0.72, min: 0.5, max: 0.95, qualityAffecting: true },
+  // PROVISIONAL (#1): the v1 dense-cosine abstention floor. 0.608 = the openai-3-large@1024/float floor from
+  // the SYNTHETIC dry run — an indicative starting value, NOT validated (calibration set == test set on ~30
+  // synthetic pairs). Re-derive on real de-identified content at first-client onboarding (#43), and again when
+  // the reranker lands (#14 — a different scale). See docs/adr/0001-embedding-model-pin.md.
+  { key: 'retrieval_min_relevance', default: 0.608, min: 0.5, max: 0.95, qualityAffecting: true },
   { key: 'retrieval_max_results', default: 20, min: 1, max: 100, qualityAffecting: true },
   { key: 'chunk_ttl_days', default: 90, min: 7, max: 365, qualityAffecting: false },
   { key: 'decay_min_utility_score', default: 0.2, min: 0, max: 1, qualityAffecting: true },

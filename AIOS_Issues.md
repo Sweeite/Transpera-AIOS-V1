@@ -72,6 +72,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 **M0** · **deps:** none · **Spec:** Brief §4.7, tech-stack §5.5
 **Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 2):** Calibrate the *v1 dense-cosine* floor explicitly; re-derive `retrieval_min_relevance` when #14 lands (different scale — a recalibration, not a reuse).
+**✅ Status (2026-06-14): DONE — with a deferred real pin.** A **provisional** development default is pinned so M0+ can build: OpenAI `text-embedding-3-large` @ **dim 1024** / float, `EMBEDDING_VERSION = "0-provisional"` (`gateway.ts`); `retrieval_min_relevance = 0.608` (`system-config.ts`). Chosen from a **synthetic** dry-run bake-off that validated the harness, **not** the model. The **real** model/dim/dtype/floor decision is **deferred to first-client onboarding (#43)** — synthetic data saturates ranking and the one-way door only closes once a client's data accumulates. Rationale + dry-run table: `docs/adr/0001-embedding-model-pin.md` (Status: *Provisional*). Bake-off harness: `tests/eval/embedding-bakeoff/`.
 **Context.** Changing the embedding model later means re-embedding every client's corpus and re-calibrating the floor — the single most expensive decision to reverse. Get it right before anything sits on top.
 **Tasks.**
 - [ ] Assemble a sample of real agency content (emails, SOPs, meeting notes, client facts) + ~30 question→expected pairs.
@@ -743,8 +744,10 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 - [ ] Guided knowledge-capture interview → procedural/semantic memory; miss log seeds the backlog.
 - [ ] Bounded backfill (`coldstart_backfill_days`) → chunks/episodic only, no cold semantic auto-promote; throttle early consolidation.
 - [ ] Cold-start abstention copy.
+- [ ] **Finalise the embedding pin (from #1).** Before the first client's data accumulates, run the bake-off (`tests/eval/embedding-bakeoff/`) on **their de-identified real content**; decide model + **dim N** + **dtype** on real ranking + separation; derive `retrieval_min_relevance` on the **shipped representation** (int8 if quantised wins); bump `EMBEDDING_VERSION` off `0-provisional` and update ADR 0001 → *Accepted*. This is the **last moment a re-embed is cheap** (≤ one corpus). The reranker floor (#14) is still re-derived separately on its own scale.
 **Acceptance.**
 - [ ] A freshly provisioned brain answers live SoR questions about a seeded entity on day one; backfill never auto-mints semantic facts; abstention copy reflects cold-start mode.
+- [ ] The embedding pin is finalised on real data (or the provisional default is explicitly confirmed) and `EMBEDDING_VERSION` is no longer `0-provisional`.
 **Out of scope.** Importing arbitrary legacy archives beyond the bounded window.
 **Watch.** Backfill cost — bound it under `backfill_cost_ceiling` and rate-limit.
 
