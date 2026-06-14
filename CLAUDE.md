@@ -18,6 +18,7 @@ Orientation for every session. AIOS is a **durable, queryable, permission-safe o
 - **Eval fixtures are the arbiter** of every quality decision — never the live metric a change mechanically moves.
 - Any bug found becomes a **permanent regression test**.
 - Plan before non-trivial work; for one-way-door issues (e.g. #1, #9, #13, #23) present a plan and wait for approval.
+- **Commits & closing issues:** reference issues PLAINLY in commit messages (`Issue #N: …`, `seam for #13`, `see #13`) — **never** closing keywords (`closes/fixes/resolves #N`), which auto-close issues you only *referenced* (this silently false-closed #13 once). Close issues explicitly with `gh issue close N` **only after review approval**, and `git push` after every commit.
 
 ## Red lines (true at every gate)
 - ❌ **No permission leak — ever.** Fail-closed: every unverified permission/namespace defaults to deny/empty.
