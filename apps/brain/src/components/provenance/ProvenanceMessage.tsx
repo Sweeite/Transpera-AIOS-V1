@@ -31,7 +31,7 @@ function ClaimRow({ claim }: { claim: Claim }) {
     <div className={cn('flex flex-col gap-1 py-1', isInference && 'opacity-80')}>
       <p className={cn('text-sm leading-relaxed', isInference && 'italic text-muted-foreground')}>{claim.text}</p>
       <div className="flex items-center gap-2">
-        <ProvenanceChip label={claim.label} asOf={claim.asOf} />
+        <ProvenanceChip label={claim.label} {...(claim.asOf ? { asOf: claim.asOf } : {})} />
         {claim.sourceId && claim.label === 'memory' && (
           <button className="text-[11px] text-muted-foreground underline-offset-2 hover:underline">source</button>
         )}
