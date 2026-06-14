@@ -34,11 +34,13 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # ORDER IS LOAD-BEARING: typecheck → BUILD → test. Several tests import `@aios/shared`, which resolves
-      # to packages/shared/dist (see its package.json "exports"). dist MUST exist before vitest runs, or the
-      # suite goes red for the wrong reason (a missing build, not a real failure).
-      - run: pnpm typecheck
+      # ORDER IS LOAD-BEARING: BUILD must precede BOTH typecheck and test. The cross-package consumers
+      # (api/worker/core/brain) import `@aios/shared`, which resolves to packages/shared/dist (its
+      # package.json "exports") for BOTH its generated .d.ts (typecheck) and its JS (test runtime). On a
+      # fresh checkout that dist does not exist yet, so build first — else typecheck reports a phantom
+      # "Cannot find module '@aios/shared'" and the cascade of any/undefined errors that follow from it.
       - run: pnpm -r build
+      - run: pnpm typecheck
       - run: pnpm test
 
   # ── Lane 2: real Postgres. The #2/#7 divergence catcher — pglite's pgvector is not Supabase's. A service ──
