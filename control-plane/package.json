@@ -12,6 +12,7 @@
     "deploy-all": "tsx src/deploy-all.ts"
   },
   "dependencies": {
-    "@aios/shared": "workspace:*"
+    "@aios/shared": "workspace:*",
+    "postgres": "^3.4.9"
   }
 }

@@ -14,6 +14,12 @@ importers:
       '@types/node':
         specifier: ^20
         version: 20.19.43
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@electric-sql/pglite@0.3.16)(postgres@3.4.9)
+      postgres:
+        specifier: ^3.4.9
+        version: 3.4.9
       tsx:
         specifier: ^4.16.0
         version: 4.22.4
@@ -87,6 +93,9 @@ importers:
       '@aios/shared':
         specifier: workspace:*
         version: link:../packages/shared
+      postgres:
+        specifier: ^3.4.9
+        version: 3.4.9
 
   packages/api:
     dependencies:
@@ -106,8 +115,11 @@ importers:
         specifier: workspace:*
         version: link:../shared
       drizzle-orm:
-        specifier: '*'
-        version: 0.45.2(@electric-sql/pglite@0.3.16)
+        specifier: ^0.45.2
+        version: 0.45.2(@electric-sql/pglite@0.3.16)(postgres@3.4.9)
+      postgres:
+        specifier: ^3.4.9
+        version: 3.4.9
       zod:
         specifier: '*'
         version: 4.4.3
@@ -1358,6 +1370,10 @@ packages:
     resolution: {integrity: sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A==}
     engines: {node: ^10 || ^12 || >=14}
 
+  postgres@3.4.9:
+    resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
+    engines: {node: '>=12'}
+
   process-warning@4.0.1:
     resolution: {integrity: sha512-3c2LzQ3rY9d0hc1emcsHhfT9Jwz0cChib/QN89oME2R451w5fy3f0afAhERFZAwrbDU43wk12d0ORBpDVME50Q==}
 
@@ -2325,9 +2341,10 @@ snapshots:
       '@babel/runtime': 7.29.7
       csstype: 3.2.3
 
-  drizzle-orm@0.45.2(@electric-sql/pglite@0.3.16):
+  drizzle-orm@0.45.2(@electric-sql/pglite@0.3.16)(postgres@3.4.9):
     optionalDependencies:
       '@electric-sql/pglite': 0.3.16
+      postgres: 3.4.9
 
   electron-to-chromium@1.5.372: {}
 
@@ -2593,6 +2610,8 @@ snapshots:
       nanoid: 3.3.12
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  postgres@3.4.9: {}
 
   process-warning@4.0.1: {}
 

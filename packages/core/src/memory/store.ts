@@ -93,9 +93,14 @@ const SELECT_COLS =
  * Happy-path write: embed → hash → set sensitivity/zone from input → insert (§5). NO routing gates (#17) and
  * NO invalidation/supersession (#12) — those are separate issues; this is a direct write.
  *
- * Dedup is NAMESPACE-SCOPED and check-then-insert (a SELECT, then skip if found). That is a TOCTOU race —
- * fine for M0's single writer, but #7 adds the DB-level guard (partial UNIQUE (namespace, content_hash)
- * WHERE status='active' + ON CONFLICT here) once `status` exists; until then the duplicate is caught here.
+ * Dedup is NAMESPACE-SCOPED and now race-safe (#7 closed #3's TOCTOU deferral). Two layers:
+ *   1. a cheap pre-SELECT of the ACTIVE row — the fast path that skips the embed entirely on the common
+ *      re-upload case (a model call saved), and
+ *   2. INSERT … ON CONFLICT (namespace, content_hash) WHERE status='active' DO NOTHING — the DB-level guard
+ *      (the partial UNIQUE added in 0004) that closes the window between the SELECT and the INSERT. If a
+ *      concurrent writer wins that race, our INSERT no-ops and we re-read the winner's row.
+ * Invalidated rows are exempt from the unique index (they legitimately share the hash with their successor,
+ * §4.4), so the guard constrains exactly the live set.
  */
 export async function writeMemory(
   query: QueryFn,
@@ -117,9 +122,10 @@ export async function writeMemory(
 
   const contentHash = contentHashOf(input.statement);
 
-  // Namespace-scoped dedup: if an identical row already exists, skip the write AND the embed entirely.
+  // Fast path — namespace-scoped dedup against the ACTIVE row: skip the write AND the embed entirely. Scoped
+  // to status='active' because an invalidated row legitimately shares the hash with its successor (§4.4).
   const existing = await query(
-    `SELECT ${SELECT_COLS} FROM memories WHERE namespace = $1 AND content_hash = $2 LIMIT 1`,
+    `SELECT ${SELECT_COLS} FROM memories WHERE namespace = $1 AND content_hash = $2 AND status = 'active' LIMIT 1`,
     [input.namespace, contentHash],
   );
   if (existing.rows.length > 0) {
@@ -142,6 +148,7 @@ export async function writeMemory(
     `INSERT INTO memories
        (namespace, zone, sensitivity_level, type, statement, content_hash, provenance, embedding_model, embedding_version, embedding)
      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::vector)
+     ON CONFLICT (namespace, content_hash) WHERE status = 'active' DO NOTHING
      RETURNING ${SELECT_COLS}`,
     [
       input.namespace,
@@ -156,6 +163,30 @@ export async function writeMemory(
       `[${embedding.join(',')}]`,
     ],
   );
+
+  // ON CONFLICT DO NOTHING returns zero rows ⇒ a concurrent writer inserted the same (namespace, content_hash)
+  // between our pre-SELECT and this INSERT (the TOCTOU window #3 deferred to the DB). The DB held the line —
+  // one active row exists. Re-read the WINNER's row and return it truthfully as a dedup, exactly like the
+  // fast path. The wasted embed on the losing side is the only cost of the race; correctness is preserved.
+  if (inserted.rows.length === 0) {
+    const winner = await query(
+      `SELECT ${SELECT_COLS} FROM memories WHERE namespace = $1 AND content_hash = $2 AND status = 'active' LIMIT 1`,
+      [input.namespace, contentHash],
+    );
+    if (winner.rows.length === 0) {
+      // The active row was invalidated (#12) in the sliver between the conflict and this read. Vanishingly
+      // rare and #12 isn't built yet — fail LOUDLY rather than fabricate a row (no silent failure).
+      throw new Error(
+        'writeMemory: ON CONFLICT race — the conflicting active row vanished before re-read (concurrent invalidation?). ' +
+          'Refusing to return a fabricated result.',
+      );
+    }
+    const stored = rowToMemory(winner.rows[0]);
+    const labelConflict = input.sensitivityLevel > stored.sensitivityLevel || input.zone !== stored.zone;
+    const typeConflict = input.type !== stored.type;
+    return { memory: stored, deduped: true, labelConflict, typeConflict };
+  }
+
   return { memory: rowToMemory(inserted.rows[0]), deduped: false, labelConflict: false, typeConflict: false };
 }
 
