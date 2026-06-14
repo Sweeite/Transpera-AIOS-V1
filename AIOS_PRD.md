@@ -152,6 +152,7 @@ Implements the §5 decision tree on incoming content, *before* the model where p
 ### 6.6 Tool-calling orchestration
 - The agent loop: model proposes tool call → execute → feed result back → repeat to a turn cap.
 - Tool errors are caught and surfaced, not swallowed; bounded retries; escalate to human past the cap (per Agent Settings).
+- **Capability-based routing:** each agent has a structured **manifest** (`whenToUse`, `capabilities`, `inputs`/`outputs`, `exampleGoals`). The orchestrator routes a sub-goal by (1) a deterministic pre-filter on capability tags + RBAC → small candidate set, then (2) LLM planning over those candidates. Delegation depth is bounded by `orchestrator_max_depth` (keep trees shallow). (brief §7.2, §7.3)
 - **Clarification interrupt:** past the retry cap or on irreducible ambiguity, a (sub-)agent emits a typed `clarification_request` and **pauses** to durable `task_state` rather than guessing — the orchestrator answers from context, else a human does via the inbox, then the task **resumes from the pause**. This replaces a per-agent chat surface (brief §7.3).
 - **Principal-scoped tokens & permissions:** every run carries a `principal` (user or service) fixed at trigger time and inherited by sub-agents; per-user integration tokens resolve from the principal and are unavailable to system-triggered runs (brief §7.5, §10.1).
 - **Action authorization:** an action is allowed only if in `intersection(agent allowed tools, principal permissions)`; **irreversible/external actions (email, SoR write, money, client-facing) require preview → confirm** unless a standing approval exists. Writes are gated like sensitive config. (brief §9.2)
@@ -192,6 +193,13 @@ The resolver from a mention to a canonical entity + its per-SoR external ids, us
 - Canonical entity ids are **minted internally**; external SoR ids are **mirrored** per connector. Identity is owned internally — "SoR wins" governs field *values* (§4.9), not identity.
 - **Read:** resolve entity → look up external ids → fan out live fetch only to connectors that hold it → blend with namespace-scoped memory → one provenance-labelled answer under a latency budget; partial failure → "couldn't reach source"; short per-principal cache bounds latency/rate-limits.
 - **Acceptance:** "what do we know about Client X" resolves to one canonical entity, fetches live only from connectors that hold it, and blends live + memory with correct per-span provenance; an entity that won't resolve abstains rather than guessing.
+
+**Design decisions (resolved — the algorithm, not just the contract; this is the hardest piece, so the choices are named not left implicit):**
+- **D1 — Entity resolution:** deterministic-first (exact/alias match) → embedding similarity with a **confidence floor**, context-boosted by the query's namespace. Below the floor → **abstain** (a wrong entity is a cross-client leak risk, never guess).
+- **D2 — Query → fetch-plan:** a **deterministic planner** with a default field set per entity kind handles the common entity-centric queries; open-ended queries fall back to the LLM tool-loop (§6.6). Predictable where it matters, flexible where it must be.
+- **D3 — Conflict:** SoR **wins on field values** (§4.9); memory is shown as the interpretive layer *beside* the live value, never silently overriding it.
+- **D4 — Latency:** holding connectors fetched **in parallel**, each under a deadline; memory retrieval runs **concurrently** and never waits on a slow SoR; a missed deadline → "couldn't reach source" + last-known (§6).
+- **D5 — Cache:** very short per-principal TTL (seconds), still honestly labelled "live"; **skipped when the answer will drive an action** (freshness matters more there).
 
 ---
 

@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AIOS — How it works (explainer)</title>
+<style>
+  :root{
+    --bg:#fbfbfd; --panel:#fff; --ink:#1c2230; --muted:#5b6577; --line:#e6e8ee;
+    --indigo:#5b5bf0; --indigo-soft:#eef0ff;
+    --green:#1f9d57; --green-soft:#e9f7ef;
+    --blue:#2f6df0; --blue-soft:#eaf1ff;
+    --amber:#c9870b; --amber-soft:#fdf3e3;
+    --gray:#7b8494; --gray-soft:#f1f3f7;
+    --red:#d2443e; --red-soft:#fdeceb;
+    --teal:#0f9aa6; --teal-soft:#e7f7f8;
+    --radius:14px; --shadow:0 1px 2px rgba(20,25,40,.04),0 8px 24px rgba(20,25,40,.05);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Inter,sans-serif;line-height:1.55}
+  .wrap{max-width:980px;margin:0 auto;padding:32px 20px 80px}
+  header.top{text-align:center;padding:28px 0 8px}
+  header.top h1{margin:0;font-size:30px;letter-spacing:-.02em}
+  header.top p{margin:8px auto 0;max-width:620px;color:var(--muted)}
+  .calm{margin:18px auto;max-width:760px;background:var(--green-soft);border:1px solid #cdeedd;
+    border-radius:var(--radius);padding:14px 18px;color:#1d5e3a;font-size:14.5px}
+  .calm b{color:#12492c}
+  nav.tabs{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;gap:6px;flex-wrap:wrap;
+    justify-content:center;padding:14px 0;border-bottom:1px solid var(--line);margin-bottom:8px}
+  nav.tabs button{border:1px solid var(--line);background:var(--panel);color:var(--muted);
+    padding:8px 14px;border-radius:999px;font-size:13.5px;cursor:pointer;transition:.15s}
+  nav.tabs button:hover{color:var(--ink);border-color:#cfd4df}
+  nav.tabs button.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+  section.tab{display:none;animation:fade .25s ease}
+  section.tab.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  h2{font-size:21px;letter-spacing:-.01em;margin:26px 0 6px}
+  h2 .em{font-size:18px;opacity:.7;margin-right:8px}
+  .lead{color:var(--muted);margin:0 0 18px;max-width:740px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:20px;margin:16px 0}
+  .row{display:flex;gap:14px;flex-wrap:wrap}
+  .col{flex:1;min-width:240px}
+  .node{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:#fff}
+  .node .t{font-weight:650;font-size:14.5px;margin-bottom:2px}
+  .node .d{font-size:13px;color:var(--muted)}
+  .arrow{display:flex;align-items:center;justify-content:center;color:#b5bcca;font-size:22px;padding:2px 0}
+  .pill{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px;border:1px solid}
+  .p-green{color:var(--green);background:var(--green-soft);border-color:#bfe6cd}
+  .p-blue{color:var(--blue);background:var(--blue-soft);border-color:#cfe0ff}
+  .p-amber{color:var(--amber);background:var(--amber-soft);border-color:#f0dcb4}
+  .p-gray{color:var(--gray);background:var(--gray-soft);border-color:#dde1ea;border-style:dashed}
+  .p-red{color:var(--red);background:var(--red-soft);border-color:#f3c9c6}
+  .p-indigo{color:var(--indigo);background:var(--indigo-soft);border-color:#d4d6ff}
+  .p-teal{color:var(--teal);background:var(--teal-soft);border-color:#c4ebee}
+  .gate{display:flex;gap:14px;align-items:flex-start;padding:14px;border:1px solid var(--line);
+    border-radius:12px;margin:10px 0;background:#fff}
+  .gate .num{flex:0 0 38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    font-weight:700;color:#fff;font-size:16px}
+  .gate .body{flex:1}
+  .gate .q{font-weight:650;font-size:15px}
+  .gate .out{font-size:13px;color:var(--muted);margin-top:4px}
+  .gate code{background:#f4f5f9;padding:1px 6px;border-radius:6px;font-size:12.5px;color:#3a4256}
+  .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin-top:6px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:650}
+  .small{font-size:12.5px;color:var(--muted)}
+  .callout{border-left:3px solid var(--indigo);background:var(--indigo-soft);padding:10px 14px;border-radius:0 10px 10px 0;
+    font-size:13.5px;margin:12px 0}
+  .callout.warn{border-color:var(--amber);background:var(--amber-soft);color:#7a5610}
+  .callout.good{border-color:var(--green);background:var(--green-soft);color:#1d5e3a}
+  .tree{font-size:13.5px}
+  .tree .lvl{display:flex;gap:10px;align-items:center;margin:6px 0}
+  .tree .conn{color:#b5bcca}
+  ul.clean{margin:8px 0;padding-left:18px}
+  ul.clean li{margin:5px 0}
+  .kbd{font-family:ui-monospace,monospace;font-size:12px;background:#f4f5f9;border:1px solid var(--line);
+    border-radius:6px;padding:1px 6px}
+  .footer{text-align:center;color:var(--muted);font-size:12.5px;margin-top:36px}
+  .cycle svg{max-width:100%;height:auto}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:640px){.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>AIOS — how it actually works</h1>
+    <p>A plain-language map of the moving parts: a message's journey, how things get remembered, and how agents do work. No app UI here — just the machine, made legible.</p>
+  </header>
+
+  <div class="calm">
+    <b>Feeling anxious about silent gaps? Read this first.</b> The thing you're afraid of — quiet, invisible failure — is the single principle this whole system was designed around (<i>"these systems fail silently"</i>). That's why everything is <b>fail-closed</b>, <b>observed</b>, and <b>checked against fixtures</b>. Each of your 46 build issues has a <b>testable "done."</b> You build one layer at a time, and each one is verifiable before the next. You are not flying blind.
+  </div>
+
+  <nav class="tabs">
+    <button data-tab="big" class="active">① Big picture</button>
+    <button data-tab="journey">② A message's journey</button>
+    <button data-tab="ingest">③ Ingestion</button>
+    <button data-tab="memory">④ Memory over time</button>
+    <button data-tab="agents">⑤ Agents</button>
+    <button data-tab="trust">⑥ Why it won't fail silently</button>
+  </nav>
+
+  <!-- ① BIG PICTURE -->
+  <section class="tab active" id="big">
+    <h2><span class="em">🧠</span>Three things, one system</h2>
+    <p class="lead">At the highest level AIOS is a <b>brain</b> (memory), a <b>workforce</b> (agents), and a habit of <b>honest answering</b> (provenance) — all kept inside one client's walls.</p>
+    <div class="row">
+      <div class="col node"><div class="t">🧠 The brain</div><div class="d">Durable, permission-safe memory of what the business knows — decisions, preferences, lessons, SOPs.</div></div>
+      <div class="col node"><div class="t">🤝 The workforce</div><div class="d">Configurable agents that <i>act</i> on the memory — research, draft, score, orchestrate.</div></div>
+      <div class="col node"><div class="t">🏷️ Honest answers</div><div class="d">Every answer is labelled by where it came from, and the brain abstains rather than make things up.</div></div>
+    </div>
+
+    <div class="callout"><b>The one rule that governs everything (the spine):</b> store something in memory <b>only if</b> it's <i>not</i> already a field in a system of record <b>and</b> it has lasting interpretive value. Current facts (a deal stage, an invoice) are <b>fetched live</b>, never copied. On conflict, the system of record always wins.</div>
+
+    <h2>The three engines that "know what to do"</h2>
+    <p class="lead">There is no single magic brain deciding things. It's three understandable engines:</p>
+    <div class="row">
+      <div class="col node"><div class="t">✍️ Write — the routing gates</div><div class="d">Decide what comes in, whether it's worth keeping, and as what type. (Tab ③)</div></div>
+      <div class="col node"><div class="t">🔎 Read — retrieval</div><div class="d">Pull the relevant memories, permission-filtered and labelled, or abstain. (Tab ②)</div></div>
+      <div class="col node"><div class="t">🔧 Maintain — the crons</div><div class="d">Consolidate, decay, prune — the brain keeps itself healthy while you sleep. (Tab ④)</div></div>
+    </div>
+    <div class="callout good"><b>Why isolation is calm-making:</b> each client gets their own database + their own engine. One client physically cannot reach another's data — not "filtered from," <i>cannot address</i>. The code is one shared codebase; only the data is separate.</div>
+  </section>
+
+  <!-- ② JOURNEY -->
+  <section class="tab" id="journey">
+    <h2><span class="em">💬</span>What happens when someone types a message</h2>
+    <p class="lead">One box. Behind it, an <b>intent router</b> decides: are you <b>asking</b> or <b>telling it to do something</b>? You never have to choose.</p>
+
+    <div class="panel">
+      <div class="node" style="text-align:center;background:var(--indigo-soft);border-color:#d4d6ff">
+        <div class="t">💬 "What do we know about Acme?" &nbsp;/&nbsp; "Draft the Acme follow-up."</div>
+        <div class="d">one chat box · every message carries a <b>principal</b> (who you are)</div>
+      </div>
+      <div class="arrow">↓</div>
+      <div class="node" style="text-align:center"><div class="t">🧭 Intent router</div><div class="d">query or command?</div></div>
+      <div class="two" style="margin-top:12px">
+        <div>
+          <div class="node" style="border-color:#cfe0ff;background:var(--blue-soft)"><div class="t">QUERY → answer it</div></div>
+          <div class="arrow">↓</div>
+          <div class="node"><div class="t">Retrieval</div><div class="d">find relevant memories — <b>permission-filtered</b> (only what you may see) and <b>namespace-scoped</b> (the right client) — plus any <b>live</b> facts from the systems of record.</div></div>
+          <div class="arrow">↓</div>
+          <div class="node"><div class="t">Provenance + abstain</div><div class="d">label every claim by source. If nothing clears the bar, <b>say "I don't know"</b> and log it.</div></div>
+        </div>
+        <div>
+          <div class="node" style="border-color:#d4d6ff;background:var(--indigo-soft)"><div class="t">COMMAND → do it</div></div>
+          <div class="arrow">↓</div>
+          <div class="node"><div class="t">Known steps? → Workflow</div><div class="d">a fixed JSON recipe runs deterministically (cheap, predictable).</div></div>
+          <div class="arrow">↓</div>
+          <div class="node"><div class="t">Open-ended? → Orchestrator</div><div class="d">plans the work across specialist agents (Tab ⑤).</div></div>
+        </div>
+      </div>
+    </div>
+
+    <h2>The four honesty labels</h2>
+    <div class="row">
+      <div class="col node"><span class="pill p-green">I know this</span><div class="d" style="margin-top:6px">From memory — shows source + as-of date.</div></div>
+      <div class="col node"><span class="pill p-blue">This is live</span><div class="d" style="margin-top:6px">Fetched from a system of record right now.</div></div>
+      <div class="col node"><span class="pill p-amber">Couldn't reach source</span><div class="d" style="margin-top:6px">Live fetch failed — shows last-known + timestamp.</div></div>
+      <div class="col node"><span class="pill p-gray">General inference</span><div class="d" style="margin-top:6px">Not from your business — shown visually distinct, never as a fact.</div></div>
+    </div>
+  </section>
+
+  <!-- ③ INGESTION -->
+  <section class="tab" id="ingest">
+    <h2><span class="em">📥</span>Ingestion — the four gates</h2>
+    <p class="lead">Everything that comes in (an email, a Slack message, a doc, a meeting transcript, a CRM event) runs these gates <b>in order, cheap → expensive</b>, and stops at the first match. The deterministic, free gates run first so an LLM is only used when truly needed.</p>
+
+    <div class="gate">
+      <div class="num" style="background:var(--red)">1</div>
+      <div class="body"><div class="q">Sensitive or excluded?</div>
+        <div class="out">From a do-not-ingest source (HR, legal, #personal) or carrying a sensitivity label → <span class="pill p-red">DROP</span> never stored, never indexed. <span class="small">Deterministic · no LLM</span></div></div>
+    </div>
+    <div class="gate">
+      <div class="num" style="background:var(--blue)">2</div>
+      <div class="body"><div class="q">A current-state structured fact?</div>
+        <div class="out">Only for structured connectors. Is the field in the schema registry (e.g. <code>deal_stage</code>)? → <span class="pill p-blue">FETCH LIVE</span> never copy it into memory. Unknown field → review, never auto-store. <span class="small">Deterministic · <b>no LLM, ever</b></span></div></div>
+    </div>
+    <div class="gate">
+      <div class="num" style="background:var(--amber)">3</div>
+      <div class="body"><div class="q">Lasting interpretive value?</div>
+        <div class="out">A cheap classifier first; an LLM only on the ambiguous ones. No / Unsure → <span class="pill p-gray">INDEX-IN-PLACE</span> (searchable "chunks", no lifecycle). Yes → continue. <span class="small">Safe default = keep it searchable, never auto-promote uncertain content.</span></div></div>
+    </div>
+    <div class="gate">
+      <div class="num" style="background:var(--green)">4</div>
+      <div class="body"><div class="q">Also a structured action?</div>
+        <div class="out">Produces a task/contact/pipeline change? → <span class="pill p-teal">WRITE BOTH</span> the structured part to the system of record <i>and</i> an episodic memory of where it came from. Otherwise → <span class="pill p-green">WRITE TO MEMORY</span> (pick the type — Tab ④).</div></div>
+    </div>
+
+    <div class="callout"><b>After any write:</b> attach provenance · sensitivity = the <i>highest</i> of its sources · zone = the <i>union</i> · skip if a content-hash duplicate · invalidate any older fact it replaces. A <b>low-trust source</b> (inbound external email, web) can be made searchable but <b>cannot become a trusted "I know this" memory</b> without corroboration or human review — this stops bad/injected content from laundering itself into fact.</div>
+    <div class="callout good"><b>Nothing is invisible:</b> every gate decision (even DROP) is written to an <b>ingestion-decision log</b> (references, not content). That's what lets you later ask "did we wrongly drop something important?" — the one blind spot most systems never close.</div>
+  </section>
+
+  <!-- ④ MEMORY -->
+  <section class="tab" id="memory">
+    <h2><span class="em">🧠</span>The four memory types</h2>
+    <table>
+      <tr><th>Type</th><th>Holds</th><th>Example</th><th>Over time</th></tr>
+      <tr><td><b>Working</b></td><td>The current turn / live task context</td><td>The question being answered right now</td><td><span class="pill p-gray">never persisted</span></td></tr>
+      <tr><td><b>Episodic</b></td><td>Events — what happened, when, who</td><td>"In the May 3 call, the client asked for async updates"</td><td>Decays <b>aggressively</b> — once it's been distilled into a semantic fact</td></tr>
+      <tr><td><b>Semantic</b></td><td>Durable facts, decisions, preferences</td><td>"Client X prefers async updates"</td><td>Decays <b>slowly</b>; a <i>wrong</i> fact is invalidated, not decayed</td></tr>
+      <tr><td><b>Procedural</b></td><td>SOPs, playbooks, how-to</td><td>"How we onboard a retainer client"</td><td><span class="pill p-green">decay-exempt</span> — only replaced, never fades</td></tr>
+    </table>
+
+    <h2>How a memory lives and dies</h2>
+    <p class="lead">This cycle is the moat. Most "RAG apps" only have the searchable-chunks half — none of this lifecycle.</p>
+    <div class="panel cycle">
+      <svg viewBox="0 0 860 270" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif,system-ui" font-size="13">
+        <defs>
+          <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#b5bcca"/>
+          </marker>
+        </defs>
+        <!-- nodes -->
+        <g>
+          <rect x="10" y="40" width="150" height="58" rx="12" fill="#fff" stroke="#e6e8ee"/>
+          <text x="85" y="64" text-anchor="middle" font-weight="650">📥 Something</text>
+          <text x="85" y="82" text-anchor="middle" fill="#5b6577">happens (ingestion)</text>
+
+          <rect x="210" y="40" width="160" height="58" rx="12" fill="#fff" stroke="#e6e8ee"/>
+          <text x="290" y="64" text-anchor="middle" font-weight="650">Episodic memory</text>
+          <text x="290" y="82" text-anchor="middle" fill="#5b6577">"the May 3 call…"</text>
+
+          <rect x="430" y="40" width="180" height="58" rx="12" fill="#e9f7ef" stroke="#bfe6cd"/>
+          <text x="520" y="60" text-anchor="middle" font-weight="650">Semantic fact</text>
+          <text x="520" y="78" text-anchor="middle" fill="#1d5e3a">"prefers async updates"</text>
+          <text x="520" y="92" text-anchor="middle" fill="#5b6577" font-size="11">consolidation cron (nightly)</text>
+
+          <rect x="675" y="40" width="170" height="58" rx="12" fill="#fff" stroke="#e6e8ee"/>
+          <text x="760" y="64" text-anchor="middle" font-weight="650">🔎 Answers</text>
+          <text x="760" y="82" text-anchor="middle" fill="#5b6577">"I know this" + source</text>
+
+          <!-- arrows -->
+          <line x1="160" y1="69" x2="208" y2="69" stroke="#b5bcca" marker-end="url(#a)"/>
+          <line x1="370" y1="69" x2="428" y2="69" stroke="#b5bcca" marker-end="url(#a)"/>
+          <line x1="610" y1="69" x2="673" y2="69" stroke="#b5bcca" marker-end="url(#a)"/>
+
+          <!-- episodic decays after consolidation -->
+          <path d="M290 98 C 290 150, 290 150, 290 150" stroke="none"/>
+          <rect x="210" y="150" width="160" height="50" rx="12" fill="#f1f3f7" stroke="#dde1ea" stroke-dasharray="4 3"/>
+          <text x="290" y="171" text-anchor="middle" fill="#7b8494">episodic decays</text>
+          <text x="290" y="188" text-anchor="middle" fill="#7b8494" font-size="11">(only once a semantic child exists)</text>
+          <line x1="290" y1="98" x2="290" y2="148" stroke="#b5bcca" marker-end="url(#a)"/>
+
+          <!-- semantic back-pointer -->
+          <path d="M455 98 C 420 130, 360 140, 330 150" fill="none" stroke="#bfe6cd" stroke-dasharray="4 3" marker-end="url(#a)"/>
+          <text x="378" y="128" fill="#1d5e3a" font-size="11">source_refs ↩ keeps the link</text>
+
+          <!-- semantic decay / invalidate -->
+          <rect x="430" y="150" width="180" height="50" rx="12" fill="#fff" stroke="#e6e8ee"/>
+          <text x="520" y="170" text-anchor="middle" font-weight="600" font-size="12">retrieved → stays strong</text>
+          <text x="520" y="187" text-anchor="middle" fill="#d2443e" font-size="11">wrong → invalidated (history kept)</text>
+          <line x1="520" y1="98" x2="520" y2="148" stroke="#b5bcca" marker-end="url(#a)"/>
+        </g>
+      </svg>
+      <div class="legend">
+        <span>📥 ingest → <span class="pill p-green" style="padding:0 7px">episodic</span></span>
+        <span>→ nightly <b>consolidation</b> → <span class="pill p-green" style="padding:0 7px">semantic</span></span>
+        <span>→ weekly <b>decay</b> tidies up</span>
+        <span>→ SOPs are <b>never</b> decayed</span>
+      </div>
+    </div>
+
+    <div class="callout good"><b>The guard against silent loss:</b> episodic is only ever deleted once a <i>confirmed</i> semantic child points back to it. If consolidation ever misses one, that episodic is kept (and flagged), never silently dropped. A coverage metric watches for exactly this.</div>
+    <div class="callout"><b>Two extra filters, always applied:</b> <b>namespace</b> (is this about the right client/project — don't bleed Client A into Client B) and <b>permission</b> (is the asker cleared to see it). Both fail closed: when unsure, show <i>less</i>.</div>
+  </section>
+
+  <!-- ⑤ AGENTS -->
+  <section class="tab" id="agents">
+    <h2><span class="em">🤝</span>How the right task reaches the right agent</h2>
+    <p class="lead">Two routing layers. The first picks <i>answer vs act</i>; the second picks <i>how to act</i> — and most repeatable work uses the predictable, non-magical path.</p>
+
+    <div class="two">
+      <div class="panel">
+        <div class="t" style="font-weight:650;margin-bottom:6px">Mode A · Workflow <span class="pill p-blue">deterministic</span></div>
+        <p class="small" style="margin:0 0 8px">When the steps are <b>known</b>. A JSON recipe runs exactly the same way every time. Cheap, predictable, no surprises.</p>
+        <div class="tree">
+          <div class="lvl"><span class="kbd">new CRM contact</span></div>
+          <div class="lvl"><span class="conn">└→</span> researcher</div>
+          <div class="lvl"><span class="conn">&nbsp;&nbsp;&nbsp;└→</span> scorer</div>
+          <div class="lvl"><span class="conn">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└→</span> email-writer <span class="small">(if score &gt; 7)</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="t" style="font-weight:650;margin-bottom:6px">Mode B · Orchestrator <span class="pill p-indigo">dynamic</span></div>
+        <p class="small" style="margin:0 0 8px">When the goal is <b>open-ended</b> ("prep me for the Acme meeting"). The orchestrator reads the <b>agent registry</b> and plans who does what.</p>
+        <div class="tree">
+          <div class="lvl"><b>🧭 Orchestrator</b> <span class="small">— "prep for Acme"</span></div>
+          <div class="lvl"><span class="conn">├→</span> 🔍 Researcher <span class="small">— pull Acme history</span></div>
+          <div class="lvl"><span class="conn">├→</span> 📊 Analyst <span class="small">— summarise the account</span></div>
+          <div class="lvl"><span class="conn">└→</span> ✍️ Writer <span class="small">— draft the brief</span></div>
+          <div class="lvl"><span class="conn">&nbsp;&nbsp;&nbsp;&nbsp;└→</span> 🔍 sub-agent <span class="small">— look up one detail</span></div>
+        </div>
+      </div>
+    </div>
+
+    <h2>What makes routing reliable (not a black box)</h2>
+    <table>
+      <tr><th>Mechanism</th><th>What it does</th></tr>
+      <tr><td>🗂️ <b>Agent registry</b></td><td>Each specialist advertises its persona, skills and allowed tools. The orchestrator matches sub-goals to the best-fit agent — like tool-calling, but the "tools" are agents.</td></tr>
+      <tr><td>🪪 <b>Principal inheritance</b></td><td>The whole tree acts as the <i>one</i> user/service that triggered it. A sub-agent 3 levels deep can never exceed that person's permissions or borrow someone else's tokens.</td></tr>
+      <tr><td>📈 <b>Trust score</b></td><td>Agents that fail or get rejected lose trust → constrained (need approval) → quarantined (disabled). Bad agents don't quietly keep running.</td></tr>
+      <tr><td>🙋 <b>Clarification interrupt</b></td><td>A stuck sub-agent doesn't guess or loop — it <b>pauses</b> (durable state), asks via the Inbox, and <b>resumes</b> when answered.</td></tr>
+      <tr><td>🛑 <b>Confirmation gate</b></td><td>Anything irreversible/external (send email, change a record, touch money) previews → confirms before doing it.</td></tr>
+      <tr><td>🌳 <b>Live delegation tree</b></td><td>Who handed what to whom is visible and traced — multi-agent is real and watchable, not implied.</td></tr>
+    </table>
+    <div class="callout warn"><b>Honest caveat → now addressed:</b> dynamic routing is only as good as the agent descriptions, and deep trees cost more and are harder to debug. So it's specced explicitly: each agent carries a structured <b>capability manifest</b> (<span class="kbd">whenToUse</span>, <span class="kbd">capabilities</span>, <span class="kbd">exampleGoals</span>) the orchestrator routes on; a deterministic pre-filter narrows the candidate set before the planner runs; and delegation depth is capped by <span class="kbd">orchestrator_max_depth</span> (default 3) to keep trees shallow. Use <b>workflows</b> for known paths, the orchestrator only for open-ended ones.</div>
+  </section>
+
+  <!-- ⑥ TRUST -->
+  <section class="tab" id="trust">
+    <h2><span class="em">🛡️</span>Why it won't fail silently — the part for your anxiety</h2>
+    <p class="lead">No system is immune to silent failure — pretending otherwise <i>is</i> the trap. The honest goal is to shrink the hidden surface to almost nothing and put a guard on each piece. Here's what's already designed in.</p>
+
+    <table>
+      <tr><th>The fear</th><th>The guard that's built in</th></tr>
+      <tr><td>Showing data to the wrong person</td><td><b>Fail-closed permissions</b> applied in the database before ranking + <b>adversarial leak tests</b> in CI (issue #36). When unsure, it shows nothing.</td></tr>
+      <tr><td>Confident, wrong answers</td><td><b>Provenance per claim</b> + <b>abstain over guess</b> + a verification pass on cited claims. "General inference" is visually marked, never a fact.</td></tr>
+      <tr><td>Quietly losing knowledge</td><td>Episodic only deleted with a confirmed semantic child; SOPs never decay; <b>invalidate-don't-overwrite</b> keeps full history.</td></tr>
+      <tr><td>Wrongly dropping something at ingestion</td><td><b>Ingestion-decision log</b> + sampled audit + miss↔ingestion cross-check — you can <i>see</i> what was dropped.</td></tr>
+      <tr><td>Quality eroding over weeks</td><td><b>Quality Monitor</b> (abstention/miss/utility trends) judged by <b>held-out eval fixtures</b>, not metrics that move themselves.</td></tr>
+      <tr><td>The monitors themselves dying</td><td><b>Watching the watchers</b> (#45): dead-man's switch on every cron, embedding-drift canary, completeness critic, and a CI test that no model call escapes the gateway.</td></tr>
+      <tr><td>One client leaking into another</td><td><b>Physical isolation</b>: separate DB + engine + queue per client. No shared query path exists to leak through.</td></tr>
+    </table>
+
+    <div class="callout good"><b>Your real safety net while building:</b> every one of the 46 issues has <b>acceptance criteria</b> — a concrete, testable "done." You don't have to hold the whole system in your head. Build the next issue, make its acceptance test pass, move on. The architecture's been pressure-tested three times; what's left is implementation you verify one slice at a time.</div>
+    <div class="callout"><b>Where to start (least scary path):</b> Milestone 0 — the tracer-bullet slice (issues #1–#5): upload one SOP → embed → retrieve → answer with a provenance label → abstain when it doesn't know. That one thread proves the riskiest core end-to-end before any of the bigger machinery exists.</div>
+  </section>
+
+  <div class="footer">
+    AIOS explainer · derived from AIOS_Brief.md / AIOS_PRD.md / AIOS_TechStack_Scaffolding.md · open this anytime you feel lost in the plumbing.
+  </div>
+</div>
+
+<script>
+  const tabs = document.querySelectorAll('nav.tabs button');
+  const secs = document.querySelectorAll('section.tab');
+  tabs.forEach(b => b.addEventListener('click', () => {
+    tabs.forEach(x => x.classList.remove('active'));
+    secs.forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById(b.dataset.tab).classList.add('active');
+    window.scrollTo({top:0, behavior:'smooth'});
+  }));
+</script>
+</body>
+</html>

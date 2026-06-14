@@ -6,6 +6,7 @@ export * as retrieval from './harness/retrieval.js';
 export * as context from './harness/context.js';
 export * as provenance from './harness/provenance.js';
 export * as tools from './harness/tools.js';
+export * as federation from './harness/federation.js';
 export * as guardrails from './harness/guardrails.js';
 export * as trace from './harness/trace.js';
 export * as monitors from './harness/monitors.js';
@@ -21,6 +22,7 @@ export * as consolidate from './memory/consolidate.js';
 export * as decay from './memory/decay.js';
 
 // Agents, workflows, intent
+export * as agentRegistry from './agents/registry.js';
 export * as agentRunner from './agents/runner.js';
 export * as orchestrator from './agents/orchestrator.js';
 export * as workflowRunner from './workflows/runner.js';

@@ -326,15 +326,23 @@
 
 ### #23 — Federation-on-read (hybrid live + memory) 🧠 `harness` `agents`
 **M4** · **deps:** #16, #20, #13 · **Spec:** Brief §4.10, PRD §6.12
-**Context.** The flagship "what do we know about Client X" — resolve entity, fetch live, blend with memory, label provenance, all within a latency budget.
+**Context.** The flagship "what do we know about Client X" — resolve entity, fetch live, blend with memory, label provenance, all within a latency budget. **The hardest piece in the system** (entity resolution + live orchestration), so the design decisions are named below, not left to discover mid-build. Home file: `harness/federation.ts` (`answerWithFederation`).
 **Tasks.**
 - [ ] Resolve entity → look up external ids → fan out `fetchLive()` to holding connectors in parallel.
-- [ ] Deadline per fetch; miss → "couldn't reach source" + last-known.
+- [ ] Deadline per fetch; miss → "couldn't reach source" + last-known. Memory retrieval runs concurrently, never waits on a slow SoR.
 - [ ] Blend live + namespace-scoped memory into one provenance-labelled answer; per-principal short cache.
+
+**Design decisions (defaults chosen — confirm/adjust as you build):**
+- [ ] **D1 Entity resolution** — deterministic (exact/alias) → embedding similarity with a confidence floor, context-boosted by namespace; **below floor → abstain** (wrong entity = cross-client leak risk).
+- [ ] **D2 Query→fetch-plan** — deterministic planner + default field set per entity kind for common queries; LLM tool-loop fallback for open-ended.
+- [ ] **D3 Conflict** — SoR wins on field values; memory shown beside it as the interpretive layer, never silently overridden.
+- [ ] **D4 Latency** — parallel fetch, per-fetch deadline, memory concurrent; missed deadline → "couldn't reach source".
+- [ ] **D5 Cache** — seconds-long per-principal TTL, still labelled "live"; **skipped when the answer drives an action**.
+
 **Acceptance.**
-- [ ] The query blends live + memory with correct per-claim provenance; a failed fetch shows last-known + timestamp, not a guess; an unresolved entity abstains.
-**Out of scope.** Caching strategy beyond a short TTL.
-**Watch.** This is your slowest query — parallelise and budget; don't let one slow SoR hang the answer.
+- [ ] The query blends live + memory with correct per-claim provenance; a failed fetch shows last-known + timestamp, not a guess; an unresolved entity abstains; a value conflict resolves SoR-wins with memory shown beside it.
+**Out of scope.** Caching strategy beyond a short TTL; resolver beyond similarity+floor (revisit if disambiguation proves hard).
+**Watch.** This is your slowest query — parallelise and budget; don't let one slow SoR hang the answer. D1 is the crux — invest there first.
 
 ### #24 — Conditional provenance verification 🧠 `harness` `eval`
 **M4** · **deps:** #5, #14 · **Spec:** PRD §6.5, tech-stack §5.3
@@ -364,27 +372,30 @@
 
 ### #26 — Single-agent runner + tool loop + action authz 🔒🧠 `agents` `harness`
 **M5** · **deps:** #10, #9, #25 · **Spec:** Brief §7.2, §9.2, PRD §6.6
-**Context.** Agents act — the bigger blast radius than a leaked read.
+**Context.** Agents act — the bigger blast radius than a leaked read. This also defines the **agent registry + capability manifest** that routing (#27) depends on.
 **Tasks.**
+- [ ] Define `AgentManifest` (`whenToUse`, `capabilities`, `inputs`/`outputs`, `exampleGoals`, `allowedTools`, `allowedRoles`) + the registry (`registerAgent`/`getAgent`/`listAgents`).
 - [ ] `runAgent()`: assemble context → tool loop → provenance-labelled output; full step trace.
 - [ ] `runToolLoop()` with turn cap + bounded retries; errors surfaced, not swallowed.
 - [ ] Authz = intersection(allowed tools, principal); confirmation gate on external-irreversible actions.
 **Acceptance.**
-- [ ] An agent can't exceed its principal's authority; sending an email previews→confirms; the full step trace (memory→tools→reasoning→output) is recorded.
-**Out of scope.** Multi-agent delegation (#27).
+- [ ] An agent's manifest is structured (not free text) and registered; an agent can't exceed its principal's authority; sending an email previews→confirms; the full step trace (memory→tools→reasoning→output) is recorded.
+**Out of scope.** Multi-agent delegation + the routing planner (#27).
 **Watch.** Per-user tokens flow from the principal — never let a service-triggered run borrow a user token.
 
 ### #27 — Orchestrator + delegation tree + clarification interrupt 🧠 `agents`
 **M5** · **deps:** #26 · **Spec:** Brief §7.3
-**Context.** Multi-agent must be visible and real. Stuck sub-agents ask, not guess.
+**Context.** Multi-agent must be visible and real. Stuck sub-agents ask, not guess. **Routing quality depends entirely on the agent manifests (#26)** — this is the one agent-layer detail to nail.
 **Tasks.**
+- [ ] `candidatesFor(goal, principal, clearance)`: deterministic pre-filter by capability tags + RBAC → small candidate set; the LLM planner picks/sequences over those manifests (`whenToUse`/`exampleGoals`).
 - [ ] `orchestrate()`: decompose → spawn sub-agents (which may sub-delegate); sub-agents inherit the principal.
+- [ ] Enforce `orchestrator_max_depth` (default 3) — refuse to delegate deeper; keep trees shallow.
 - [ ] Expose the live delegation tree + log.
 - [ ] On `clarification_request`: try orchestrator-from-context → else escalate to Inbox → pause → resume on answer.
 **Acceptance.**
-- [ ] The delegation tree is observable live; a stuck sub-agent pauses to `task_state` and is answerable via the Inbox; answering resumes it.
+- [ ] A sub-goal routes to the right specialist via manifest pre-filter + planner (not vibes); delegation beyond the depth cap is refused; the tree is observable live; a stuck sub-agent pauses to `task_state` and is answerable via the Inbox; answering resumes it.
 **Out of scope.** Per-agent chat (deliberately not built).
-**Watch.** Token scope + permissions are decided once at the top of the tree and never escalate mid-delegation.
+**Watch.** Token scope + permissions are decided once at the top of the tree and never escalate mid-delegation. Vague manifests = flaky routing — invest in precise `whenToUse` lines.
 
 ### #28 — Inbox (the single push destination) 🧠 `agents` `frontend`
 **M5** · **deps:** #25, #9 · **Spec:** Brief §7.5

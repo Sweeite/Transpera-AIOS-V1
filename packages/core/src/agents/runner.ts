@@ -3,12 +3,11 @@
  * Each agent: persona/prompt, allowed tool set, assigned skills, RBAC-scoped memory access, trust score.
  */
 import type { Principal } from '@aios/shared';
+import type { AgentManifest } from './registry.js';
 
 export interface AgentConfig {
-  id: string;
-  persona: string;
-  allowedTools: string[];
-  allowedRoles: string[];
+  manifest: AgentManifest; // identity + capabilities + routing surface (registry.ts) — how the orchestrator picks it
+  persona: string; // the full system prompt for execution (derived from manifest + overrides)
   trustScore: number; // rolling success/rejection/error weighted by feedback; below threshold → constrained/quarantined (§7.2)
 }
 

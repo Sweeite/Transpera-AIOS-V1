@@ -22,6 +22,7 @@ export const KNOWN_KEYS: ConfigKeySpec[] = [
   { key: 'consolidation_auto_merge_threshold', default: 0.97, min: 0.9, max: 0.999, qualityAffecting: true },
   { key: 'coldstart_backfill_days', default: 90, min: 0, max: 365, qualityAffecting: false },
   { key: 'latency_budget_ms', default: 8000, min: 1000, max: 30000, qualityAffecting: false },
+  { key: 'orchestrator_max_depth', default: 3, min: 1, max: 6, qualityAffecting: false }, // keep delegation trees shallow (§7.3)
 ];
 
 /** Resolution order: client override → org default (§4.8). Range-validated. */

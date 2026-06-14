@@ -223,6 +223,8 @@ Federation-on-read and namespacing-on-write both depend on a component the rest 
 - **Read path.** "What do we know about Client X" → resolve to the canonical entity → look up its external ids → fan out live fetches only to the connectors that hold it → blend with namespace-scoped memory into one provenance-labelled answer (§6), under a latency budget, with partial failure shown as "couldn't reach source." A short per-principal cache bounds latency and rate-limits. An entity that won't resolve abstains rather than guesses.
 - **Write path.** Entity refs on an incoming proposal resolve through the same map to set the memory's namespace — keeping Client A out of Client B's answers (§4.3).
 
+*This is the hardest piece to build (entity resolution + live orchestration), so the five algorithm-level decisions — resolution method, query→fetch-plan, value conflict, latency, cache — are named explicitly in PRD §6.12 and encoded in `harness/federation.ts`, not left to discover mid-build.*
+
 ---
 
 ## 5. The routing decision tree
@@ -325,11 +327,13 @@ The user never has to decide "am I asking or commanding" — they just talk to i
 
 ### 7.2 Agents
 
-Configurable agents (researcher, scorer, email-writer, analyst, etc.), each with a persona/prompt, an allowed tool set, assigned skills, and memory access scoped by RBAC. An agent's *actions* are authorized as `intersection(allowed tools, the run's principal permissions)`, with a confirmation gate on irreversible/external actions (§9.2). **Trust score** = a rolling success / rejection / error rate weighted by human feedback; below a configurable threshold an agent is **constrained** (outputs require approval before commit), and lower still it is **quarantined** (disabled).
+Configurable agents (researcher, scorer, email-writer, analyst, etc.), each with a persona/prompt, an allowed tool set, assigned skills, and memory access scoped by RBAC. Each agent also carries an explicit **capability manifest** — `whenToUse` (the routing line), `capabilities` tags, `inputs`/`outputs`, and `exampleGoals` — which is what the orchestrator reads to pick it (§7.3). Routing quality depends entirely on these manifests, so they are a first-class, structured part of an agent's definition, not free text. An agent's *actions* are authorized as `intersection(allowed tools, the run's principal permissions)`, with a confirmation gate on irreversible/external actions (§9.2). **Trust score** = a rolling success / rejection / error rate weighted by human feedback; below a configurable threshold an agent is **constrained** (outputs require approval before commit), and lower still it is **quarantined** (disabled).
 
 ### 7.3 Orchestration & multi-agent
 
 A core capability: an orchestrator agent can decompose a goal and **delegate to sub-agents**, which can themselves sub-delegate. The system exposes the live delegation tree (who is coordinating whom, who handed what to whom) and a delegation log. This is central to the pitch — "multi-agent" must be visible and real, not implied.
+
+**How a sub-goal reaches the right agent (routing).** Two stages, cheap-to-expensive: (1) a deterministic **pre-filter** narrows the roster by capability-tag overlap + RBAC (the run's principal/clearance + each agent's `allowedRoles`), producing a *small* candidate set; (2) the orchestrator LLM then plans and sequences over those candidates' manifests (`whenToUse`/`exampleGoals`). A small candidate set is what keeps planning both cheap and reliable. **Keep trees shallow:** delegation depth is bounded by `orchestrator_max_depth` (default 3) — deep trees are where cost and debuggability fall apart, so start flat and only deepen when a goal genuinely needs it.
 
 **Stuck sub-agents ask, they don't silently fail or guess.** When a sub-agent hits irreducible ambiguity or a tool failure past its retry cap, it emits a typed `clarification_request` and **pauses** to durable `task_state` (§4.1) rather than confabulating an answer. Resolution ladder: the orchestrator first tries to answer from memory/context; if it can't, it escalates to a human via the inbox (per the Agent Settings turn-cap/escalation, PRD §6.6); the answer is injected back and the task **resumes from the pause**. This is the *only* agent-directed input surface — there is deliberately **no per-agent chat** ("talk to one agent") view. The unified front door (§7.1) covers asking; answering a stuck task's question covers the rest.
 
