@@ -163,7 +163,15 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 **M1** · **deps:** #2 · **Spec:** tech-stack §2, §5.4; Brief §4, §9
 **Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** Add the 8 audit tables; **worker uses `DATABASE_URL_SESSION` (session-mode)** — transaction-mode pooling breaks pgmq/LISTEN/advisory-locks; define `content_hash` over normalized text **+ namespace**.
-**🛠 Setup prerequisite (FIRST needed here):** the **Supabase CLI + local stack** (`supabase start`, needs Docker). M0 ran hermetically on pglite, but `getDb()` + the real `DATABASE_URL` need a real Supabase. Also run the migration against real Supabase here as a **second test lane** — pglite's bundled pgvector ≠ Supabase's, so this is where you catch pglite-vs-real divergence (the HNSW/extension-version trap noted in #2). Recommend installing it a bit earlier as that second lane. (Also required by #37 Auth, #39 provisioning.)
+**🛠 Setup prerequisite (FIRST needed here):** real Supabase via the **Supabase CLI + local stack**. M0 ran hermetically on pglite, but `getDb()` + the real `DATABASE_URL` need real Supabase — and applying the migration against it here is the **second test lane** that catches pglite-vs-real divergence (pglite's pgvector ≠ Supabase's; the HNSW/extension-version trap from #2).
+> **YOU do these 3 one-time, machine/account-level steps first — Claude Code can't (they need Docker + your account):**
+> 1. **Install Docker Desktop** and have it *running* (the local Supabase stack runs in Docker; `supabase start` needs it).
+> 2. **Install the Supabase CLI** — `brew install supabase/tap/supabase`.
+> 3. **`supabase login`** — one browser click-through.
+>
+> After that, **Claude Code drives everything else**: `supabase start`, create/apply migrations, `db reset`, `gen types`, run the real-Supabase test lane.
+
+(Also required by #37 Auth, #39 provisioning. Recommend doing the 3 steps a bit earlier so the real-Supabase lane exists before you need it.)
 **Context.** Everything sits on this. One Postgres per client; the engine connects to exactly one tenant.
 **Tasks.**
 - [ ] Set up Supabase CLI + `supabase start` (local Postgres+pgvector+Auth); confirm the migration applies cleanly on it, not just pglite.
