@@ -12,7 +12,12 @@ perishable knowledge in people's heads, answers with honest provenance, and runs
 5. **[AIOS_QA_Playbook.md](AIOS_QA_Playbook.md)** — how we prove each issue/milestone is built right; adversarial reviews, seam gates, and the final behavioural grill.
 6. **[AIOS_Operations.md](AIOS_Operations.md)** — running the business: client onboarding runbook, ingestion setup, ongoing maintenance, and the deferred-decision tripwire log.
 7. `AIOS_Explainer.html` — plain-language visual explainer (agents / memory / ingestion).
-7. `AIOS_prototype.html` — rough UI canvas (superseded by the real `apps/brain` slice).
+8. `AIOS_prototype.html` — rough UI canvas (superseded by the real `apps/brain` slice).
+
+**How we work (the build loop):**
+- **[AIOS_Workflow.md](AIOS_Workflow.md)** — the per-issue loop (build session ↔ review session) + milestone gates.
+- **[AIOS_Review_Partner.md](AIOS_Review_Partner.md)** — primer that turns a fresh Opus session into the adversarial reviewer/advisor.
+- **[CLAUDE.md](CLAUDE.md)** — standing rules, auto-loaded into every session.
 
 ## Architecture in one breath (Brief §8.2 — three layers of separation)
 
