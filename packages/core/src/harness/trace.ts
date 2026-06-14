@@ -20,6 +20,9 @@ export async function auditEvent(_event: {
   before?: unknown;
   after?: unknown;
 }): Promise<void> {
-  // TODO: append-only, tamper-evident; permission changes are the highest-value class.
+  // Tamper-evidence (#11) = a HASH CHAIN, not just append-only: each row stores prev_hash = H(prev row),
+  // so a rewritten row breaks the chain (append-only alone doesn't stop a superuser rewrite). A verify-chain
+  // check is a test + a periodic job. Permission changes are the highest-value class.
+  // TODO: compute row hash over (actor, action, refs, prev_hash); persist; expose verifyChain().
   throw new Error('TODO: auditEvent');
 }

@@ -14,7 +14,9 @@ export async function heartbeat(_monitor: string): Promise<void> {
 }
 
 export async function checkOverdueMonitors(): Promise<Array<{ monitor: string; overdueBy: number }>> {
-  // TODO: compare each monitor's last_run_at vs its expected cadence; return the overdue ones for alerting.
+  // Reads the `monitors` table (per-monitor expected cadence). MUST be driven EXTERNALLY — from the
+  // control-plane / an uptime ping — NOT an in-tenant pgmq job that would die with the worker it watches (#45).
+  // TODO: compare each monitor's last_run_at vs its cadence; return the overdue ones for alerting.
   throw new Error('TODO: checkOverdueMonitors');
 }
 

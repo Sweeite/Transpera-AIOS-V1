@@ -13,7 +13,7 @@ Version 0.1 — 13 June 2026
 - **The plugin architecture is already TS-shaped.** The architecture decision doc describes `core/engine.js`, hook registration, plugins loaded by tenant ID. That's a Node module-loading pattern. Building it in TS keeps the engine, plugins, and the prototype's eventual real frontend in one language.
 - **One language across the stack** — engine, workers, both web apps (client brain + agency console), and the plugin SDK. Smaller team, less context-switching, shared types end-to-end (a `Memory` type defined once, used in the DB layer, the API, and the UI).
 - **Postgres + pgvector is first-class in Node** (via `pg` / Drizzle / Prisma) — and Supabase *is* Postgres with pgvector built in, so the brief's whole data model drops straight in with no exotic store. Supabase also gives auth + storage for free.
-- **The harness components map cleanly to TS libraries:** the Vercel AI SDK or the official Anthropic/OpenAI SDKs for the LLM gateway, BullMQ (Redis) for the worker/queue tier, Zod for structured-output validation, all idiomatic.
+- **The harness components map cleanly to TS libraries:** the Vercel AI SDK or the official Anthropic/OpenAI SDKs for the LLM gateway, **`pgmq` (Postgres-in-Supabase) for the worker/queue tier** (not Redis — isolation, §5.4), Zod for structured-output validation, all idiomatic.
 - **Why not Python:** Python is the obvious default for ML, but you're not training models — you're orchestrating API calls and managing Postgres. Python would split the stack (Python engine + TS frontend), double the type definitions, and complicate the single-image deploy. The ML-grade libraries Python wins on aren't needed here.
 
 **Supporting choices:**
@@ -80,7 +80,7 @@ aios/
 │   ├── api/                     ← Fastify app: REST + chat streaming. Loads core, mounts tenant.
 │   │   └── src/server.ts
 │   │
-│   ├── worker/                  ← BullMQ workers: ingestion gates, consolidation, decay, jobs
+│   ├── worker/                  ← pgmq workers (in the client's own Supabase): ingestion gates, consolidation, decay, jobs; uses a SESSION-mode connection (§5.4)
 │   │   └── src/index.ts
 │   │
 │   └── shared/                  ← types shared across everything (Memory, Provenance, Trace…)

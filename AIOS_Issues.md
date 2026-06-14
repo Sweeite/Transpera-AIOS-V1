@@ -10,6 +10,60 @@
 
 ---
 
+## Audit remediation (read before any milestone)
+
+A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps owned by no issue. **None are architecture changes** — every fix is "add the table / name the owner / specify the algorithm." The structural fixes are already encoded in `db/schema.ts`, `@aios/shared` types, and `config/system-config.ts`; the per-issue fixes are listed below. Tier 1 = fix before building that issue; T2/T3 = name it as you build.
+
+**New schema tables (now in #7):** `memory_links` (typed edges — replaces flat `source_refs`), `threads` + `messages` (conversation state), `feedback`, `suggestions`, `review_queue`, `monitors` (heartbeat), `metrics_rollup`, `standing_approvals`. Plus `task_state` gains `paused_awaiting_confirmation` + `version`/`lease_until` (idempotent resume) + a typed pause payload; `audit_log` gains `prev_hash` (tamper-evidence); `user_clearance` keyed on `principal_id` with **missing-row ⇒ deny**.
+
+**New config keys (now in `system-config.ts`):** `rrf_k`, `exact_search_max_rows`, `entity_resolution_min_confidence`, `gate3_preclassifier_threshold`, `corroboration_similarity_threshold`, `intent_min_confidence`, `verify_sensitivity_threshold`, `trust_constrain_threshold`, `trust_quarantine_threshold`, `embedding_canary_drift_threshold`.
+
+**Cross-cutting primitives now owned:** (1) **one** human-in-the-loop interrupt primitive backs clarification (#27) + confirmation (#26) + trust-approval (#29) — idempotent resume via queue, principal preserved; (2) **eval-fixture corpus** has an owner (#32) — schema + validator + per-tenant starter + intent/routing/contradiction suites; (3) **floor recalibration** is owned across #1→#4→#14 — `retrieval_min_relevance` is rescaled per scorer, `reranker_model` pinned, fixtures bake a floor value.
+
+**New issues:** #47 auth/onboarding · #48 conversation state · #49 meeting-bot · #50 dashboards + rollup · #51 CI/test infra.
+
+**Per-issue fixes:**
+
+| # | Tier | Fix |
+|---|---|---|
+| 1 | T2 | Calibrate the *v1 dense-cosine* floor explicitly; re-derive `retrieval_min_relevance` when #14 lands (different scale — a recalibration, not a reuse). |
+| 2 | T3 | `vector(N)` is fixed by #1's model; a dimension change is a full re-embed (not expand/contract). Block on #1. |
+| 4 | T2 | Abstention score = **top-1 pre-fusion dense cosine** in v1, never the RRF sum; mark the seam #14 swaps. |
+| 5 | T3 | Add a structural citation guard: reject/relabel any claim whose `sourceId ∉ retrieved set` (semantic support-check is #24). |
+| 7 | **T1** | Add the 8 tables above; **worker uses `DATABASE_URL_SESSION` (session-mode)** — transaction-mode pooling breaks pgmq/LISTEN/advisory-locks; define `content_hash` over normalized text **+ namespace**. |
+| 8 | T3 | Pending changes don't take effect; one open proposal per key; bounds live in `KNOWN_KEYS` (single source, DB stores only values). |
+| 9 | **T1** | Empty `allowed_zones` → `WHERE false` (the `denyAll` flag), never empty `IN`; test it; co-verify "applied in SQL" with #13. |
+| 10 | T3 | Repair loop bounded (1 attempt → escalate to fallback model → fail); prompt-cache is a per-provider adapter concern, not one flag. |
+| 11 | T3 | Tamper-evidence = hash chain (`prev_hash`) + `verifyChain()`, or explicitly descope and soften the acceptance. |
+| 13 | **T1** | Use `rrf_k` + `exact_search_max_rows`; name the selectivity-estimation method; write the **v1 pre-reranker** floor path into `retrieval.ts` (not just §6.4 prose). |
+| 14 | T2 | Name the calibration procedure (held-out labelled set + target metric); pin `reranker_model`+`version` the floor binds to. |
+| 16 | **T1** | `resolveEntity({mention, namespaceHint}) → {entity, confidence}|null`; use `entity_resolution_min_confidence`; seed-time cross-SoR merge uses the **same** similarity+floor primitive. |
+| 17 | **T1** | Stamp `connection.trust_level → Provenance.trustLevel` in the after-write block; Gate-3 pre-classifier is its own sub-task (labelled set, `gate3_preclassifier_threshold`, false-negative audit via #19). |
+| 18 | **T1** | `corroborate()` is **computed** (shared with consolidation dedup, `corroboration_similarity_threshold`), not a boolean input; name the injection-scan approach (LLM classifier + denylist v1). |
+| 19 | T2 | Miss↔ingestion cross-check: embed the miss → ANN over `chunks` + re-fetch flagged decision-log refs. |
+| 20 | T2 | Define the `fetchLive` field-name normalization contract shared by `schema()`, `fetchLive()`, and `connector_schemas`. |
+| 22 | **T1** | Symmetric confidence on both arms; `intent_min_confidence` → clarify-back; needs `recentThread` (#48); intent fixtures (#32); destructive stop delegated to #26. |
+| 24 | T3 | Add `Claim.confidence`; verify-trigger = `sensitivity ≥ verify_sensitivity_threshold OR forAction OR confidence < t`. |
+| 26 | **T1** | Confirmation reuses the interrupt primitive (`paused_awaiting_confirmation` + preview payload); add the `standing_approvals` store. |
+| 27 | **T1** | Idempotent resume (`version`/`lease_until`, resume-via-queue, answer-already-applied guard); add a routing-accuracy fixture suite (goal → expected agent). |
+| 28 | **T1** | Resume keeps the **original** `task_state.principal`; answerer-authz check; treat the injected answer as low-trust (can unblock, not escalate). |
+| 29 | T2 | Trust formula (window + event taxonomy + weights) mirroring §4.6 decay; cold-start default = start **constrained**; route "constrained" through #26's gate. |
+| 30 | **T1** | Per-tenant **advisory lock** (no overlapping runs); the contradiction classifier ships with its **own** labelled fixture set (precision target on supersede). |
+| 31 | **T1** | "Active semantic child" queried via `memory_links` (typed), not a `source_refs` string; the feedback/retrieval-stat capture is a **dependency** (write `retrieval_count`/`last_retrieved_at` on retrieve; thumbs → `feedback`). |
+| 32 | **T1** | Owns the **fixture corpus**: schema + validator + per-tenant starter + "permanent obligation" rule (like #36). |
+| 33 | T2 | Typed `Suggestion`/`Evidence` schema (fixture-score before/after via #32); map the 6 Rs to concrete generators. |
+| 34 | T2 | Bounded resolver: variable scope (`trigger.*`, `<step>.output`), whitelisted condition grammar (comparisons only, no `eval`); webhook/system-event principal binding lives in #47. |
+| 35 | **T1** | In-process isolation: try/catch plugin load/register → boot **core-only + alert** on failure; forbidden-surface enforcement = static import-graph check extending #46. |
+| 36 | T2 | Build the leak **harness** first: seeded fixture tenant + per-user ground-truth visibility matrix; assertion = `result ⊆ visible`; define ranking/timing leaks as "same query, two clearances, restricted ⊂ full". |
+| 37 | **T1** | `auth.users.id → user_clearance` mapping; **missing row ⇒ deny**; service-principal minting for non-JWT triggers (shared with #47). |
+| 39 | T2 | Non-idempotent create reconciliation: deterministic project name + list-before-create on resume (no orphaned paid project). |
+| 41 | T3 | Name env-vs-Vault secret classes (env-key rotation = a redeploy; only Vault rotates hot); single-flight refresh-token rotation. |
+| 43 | T2 | Split into mechanical seeding+backfill vs the **guided-interview engine** (own design); name the #39/#43 seeding-ownership boundary. |
+| 45 | T2 | Watchdog runs **externally** (control-plane), not an in-tenant job; `monitors` table carries per-monitor cadence; pin the canary metric + threshold + probe set. |
+| 46 | T3 | Add embedding-provider SDKs to the forbidden list; catch `import()`/`require()`, not just static `import`; note hostname-level enforcement as a known gap. |
+
+---
+
 ## Milestone 0 — Tracer-bullet vertical slice (demoable first)
 
 > Upload an SOP → embed → retrieve → provenance answer → abstention, end to end. Validates the #1 one-way door (embedding model) and the riskiest core before the machinery exists. (tech-stack build step 0, §5.5)
@@ -620,6 +674,72 @@
 - **Meeting-bot connector** (after #44/#20/#23): unstructured, episodic-first; speaker attribution via Identity Map; conservative sensitivity + calendar-driven exclusion (HR/1:1/legal) + consent flag; actions→SoR via Gate 4. (Brief §10.2)
 - **The 12 observability dashboards** (alongside the features that populate them): each is a read over existing tables — query interface, memory inspector, ingestion+queue health, agent activity+traces, proactive builder, self-improvement, cost monitor, quality monitor, system health, audit log, connections, orchestration. (Brief §11)
 - **Cost levers** (protect the client's pass-through bill): prompt caching (#10), Gate-3 pre-classifier (#17), conditional verify (#24), multi-model routing (#10). (tech-stack §5.3)
+
+---
+
+## Added in audit remediation (new issues)
+
+### #47 — Tenant + admin onboarding & auth bootstrap 🔒🧠 `infra` `rbac` `core`
+**M1 (with #9/#39)** · **deps:** #9, #39 · **Spec:** Brief §8.1a, §9.1, §10.3
+**Context.** Every issue assumes a resolved **principal** and a **clearance row** — and nothing creates the first one. Fail-closed RBAC means a freshly provisioned brain has *nobody who can see anything or grant access* (chicken-and-egg). This is the auth-axis equivalent of the federation gap.
+**Tasks.**
+- [ ] Map Supabase `auth.users.id` (JWT `sub`) → engine principal; `user_clearance.principal_id` join. Missing row ⇒ **deny** (distinct from empty-zones).
+- [ ] Provisioning (#39) seeds the **first admin's** clearance (full zones) so the brain isn't locked out of itself.
+- [ ] **Service principal** minting for non-JWT triggers (system crons/webhooks, §7.5) — a service identity the engine trusts, carried into runs.
+- [ ] Invite/enrol flow: an admin creates users + assigns role-default clearance.
+**Acceptance.**
+- [ ] First admin can log into a fresh brain and grant access; a user with no clearance row sees nothing (not an error); a system cron runs under a service principal with no JWT.
+**Out of scope.** SSO providers beyond Supabase Auth's built-ins (later).
+**Watch.** A *missing* clearance row and an *empty-zones* row are different cases — both deny, but only the second is a deliberate "see nothing" grant.
+
+### #48 — Conversation / thread state 🧠 `core` `frontend`
+**M4 (before #22)** · **deps:** #7 · **Spec:** Brief §7.1, §4.1
+**Context.** `assembleContext` takes `recentThread` with no source; the intent router can't resolve "do it → do *what*?" without prior turns. Conversation state was specified nowhere — it is **not** working memory (which never persists).
+**Tasks.**
+- [ ] `threads` + `messages` tables/types; thread owned by a user, RBAC-shareable (§7.1).
+- [ ] Persist each turn; expose `recentThread` to context assembly (#15) **and** the intent router (#22).
+- [ ] Thread sharing honours the same fail-closed clearance as answers.
+**Acceptance.**
+- [ ] A follow-up "do it" resolves against the prior turn; a shared thread shows a viewer only what they're cleared to see.
+**Out of scope.** Branching/edit-history of threads (later).
+**Watch.** Thread content is permission-scoped like everything else — a shared thread is not a permission bypass.
+
+### #49 — Meeting-bot connector 🧠 `ingestion`
+**M3+ (after #44/#20/#23)** · **deps:** #44, #16, #20 · **Spec:** Brief §10.2
+**Context.** Promoted from a cross-cutting note because it hides a **second resolver**: speaker attribution is not #16's text-mention resolver.
+**Tasks.**
+- [ ] Unstructured, episodic-first connector implementing the `Connector` interface; conservative default sensitivity.
+- [ ] **Speaker → person attribution** via the calendar **attendee list** (diarization label → attendee intersection), NOT #16's text resolver; unmapped speakers keep raw labels + flag.
+- [ ] Calendar-driven exclusion (HR/1:1/legal do-not-ingest) — requires a calendar connector (add to #20's set).
+- [ ] Consent/record-allowed flag per connection; action items → SoR via Gate 4.
+**Acceptance.**
+- [ ] A transcript becomes episodic memory with speakers attributed to people; an excluded meeting is dropped at Gate 1; an unmapped speaker is flagged, not guessed.
+**Out of scope.** Voice-biometric speaker ID (attendee-list intersection only).
+**Watch.** Recordings have consent/legal implications — exclusion + consent flag are not optional.
+
+### #50 — Observability dashboards + metrics rollup 🧠 `frontend` `ops`
+**M8** · **deps:** #32, #37 · **Spec:** Brief §11
+**Context.** "Each dashboard is just a read" is false for the important ones: trend lines need a **time-series rollup** store no issue created, and some actions ("broaden visibility") are *writes*. Twelve surfaces were smuggled into one bullet of #38.
+**Tasks.**
+- [ ] `metrics_rollup` store + a rollup job (abstention/miss/cost/utility over time) for Quality (#32) + Cost monitors.
+- [ ] Build the 12 dashboards as real surfaces; the Orchestration view is a **live** read of in-flight `task_state`.
+- [ ] Memory Inspector's invalidate/**broaden-visibility** are writes with the §4.5 human-approval semantics, not reads.
+**Acceptance.**
+- [ ] "Abstention rate over time" renders from the rollup, not a live scan; broadening sensitivity goes through approval + audit.
+**Out of scope.** Custom/user-defined dashboards (later).
+**Watch.** Don't budget 12 data-viz surfaces as zero work — this is a multi-week build, decoupled from #38.
+
+### #51 — CI pipeline + test infrastructure ⚙️ `eval` `ops`
+**M1 (early)** · **deps:** #7 · **Spec:** tech-stack §4, §5.5
+**Context.** #32/#36/#46 all "wire into CI as a required gate" — but no issue creates the gate. Per-tenant fixtures need an ephemeral DB to run against.
+**Tasks.**
+- [ ] CI pipeline: typecheck, unit tests, the architecture test (#46), the leak fixtures (#36), the eval harness (#32) on every PR.
+- [ ] Ephemeral Postgres+pgvector for tests; seed `tests/tenant-fixtures` against it; test migrations apply clean (expand/contract).
+- [ ] An end-to-end **engine-boot** smoke test: assembled engine boots against a provisioned tenant (TENANT_ID + DB + plugin + clearance) — the path #39 produces, otherwise first exercised in prod.
+**Acceptance.**
+- [ ] A PR that introduces a leak, a direct model call, or a failing fixture is blocked; the engine-boot smoke test passes in CI.
+**Out of scope.** Load/perf testing (later).
+**Watch.** The leak + chokepoint guards are only real if CI actually runs them — this issue is what makes "wire into CI" true.
 
 ---
 

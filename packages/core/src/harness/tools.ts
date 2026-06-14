@@ -26,7 +26,10 @@ export interface ToolContext {
  * service principals.
  */
 export async function runToolLoop(_ctx: ToolContext, _tools: ToolDef[]): Promise<unknown> {
-  // TODO: loop with turn cap + bounded retries; confirmation gate by blastRadius; full step trace (§11.4);
-  // on irreducible ambiguity past the cap → emit clarification_request + pause to task_state (§7.3).
+  // Confirmation gate (blastRadius === 'external-irreversible') reuses the ONE human-in-the-loop primitive:
+  // pause to task_state.status='paused_awaiting_confirmation' with a {kind:'confirmation'} payload → Inbox →
+  // resume idempotently (version/lease). Skipped only if a matching `standing_approvals` row exists for the
+  // principal + actionType (not expired). Same pause/resume path as the clarification interrupt (§7.3).
+  // TODO: loop with turn cap + bounded retries; full step trace (§11.4); errors surfaced, not swallowed.
   throw new Error('TODO: runToolLoop');
 }

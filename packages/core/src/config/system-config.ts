@@ -23,6 +23,17 @@ export const KNOWN_KEYS: ConfigKeySpec[] = [
   { key: 'coldstart_backfill_days', default: 90, min: 0, max: 365, qualityAffecting: false },
   { key: 'latency_budget_ms', default: 8000, min: 1000, max: 30000, qualityAffecting: false },
   { key: 'orchestrator_max_depth', default: 3, min: 1, max: 6, qualityAffecting: false }, // keep delegation trees shallow (§7.3)
+  // ── added in audit remediation (config IS correctness, §4.8 — no undeclared thresholds) ──
+  { key: 'rrf_k', default: 60, min: 1, max: 100, qualityAffecting: true }, // RRF 1/(k+rank) constant (#13)
+  { key: 'exact_search_max_rows', default: 5000, min: 100, max: 50000, qualityAffecting: true }, // selectivity switch: ≤ this → exact, else HNSW (#13)
+  { key: 'entity_resolution_min_confidence', default: 0.75, min: 0.5, max: 0.99, qualityAffecting: true }, // below → abstain, never guess the entity (#16, leak risk)
+  { key: 'gate3_preclassifier_threshold', default: 0.5, min: 0, max: 1, qualityAffecting: true }, // cheap classifier: below → send to LLM, not auto-drop (#17)
+  { key: 'corroboration_similarity_threshold', default: 0.9, min: 0.7, max: 0.99, qualityAffecting: true }, // two low-trust sources corroborate above this (#18)
+  { key: 'intent_min_confidence', default: 0.6, min: 0, max: 1, qualityAffecting: true }, // below → clarify-back instead of guessing query/command (#22)
+  { key: 'verify_sensitivity_threshold', default: 3, min: 1, max: 5, qualityAffecting: true }, // run provenance verify when cited source sensitivity ≥ this (#24)
+  { key: 'trust_constrain_threshold', default: 0.5, min: 0, max: 1, qualityAffecting: true }, // below → agent outputs need approval (#29)
+  { key: 'trust_quarantine_threshold', default: 0.2, min: 0, max: 1, qualityAffecting: true }, // below → agent disabled (#29)
+  { key: 'embedding_canary_drift_threshold', default: 0.02, min: 0.001, max: 0.2, qualityAffecting: false }, // mean cosine drift over the probe set that trips the alarm (#45)
 ];
 
 /** Resolution order: client override → org default (§4.8). Range-validated. */

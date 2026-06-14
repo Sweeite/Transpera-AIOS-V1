@@ -97,6 +97,7 @@ export interface Claim {
   label: ProvenanceLabel;
   sourceId?: string; // memory id / live-fetch id; absent ⇒ general-inference by exclusion
   asOf?: string; // for "I know this" / "couldn't reach source"
+  confidence?: number; // grounding confidence — drives conditional verification (#24)
 }
 
 export interface Answer {
@@ -116,16 +117,94 @@ export interface RetrievalResult {
 
 export type TriggerKind = 'chat' | 'individual-cron' | 'system-cron' | 'webhook' | 'system-event';
 
-/** Durable execution state — survives a worker restart (§4.1). Distinct from working memory. */
+/**
+ * Durable execution state — survives a worker restart (§4.1). Distinct from working memory.
+ * ONE human-in-the-loop interrupt primitive backs clarification (#27), action confirmation (#26),
+ * and trust-constrained approval (#29) — they all pause → surface to the Inbox → resume idempotently.
+ */
+export type TaskStatus =
+  | 'running'
+  | 'paused_awaiting_input' // clarification (#27)
+  | 'paused_awaiting_confirmation' // action preview → confirm (#26) / trust-constrained (#29)
+  | 'completed'
+  | 'failed';
+
+/** What a paused task is waiting on (the typed pause payload). */
+export type PausePayload =
+  | { kind: 'clarification'; question: string }
+  | { kind: 'confirmation'; action: { tool: string; preview: string; blastRadius: string } };
+
 export interface TaskState {
   id: string;
-  status: 'running' | 'paused_awaiting_input' | 'completed' | 'failed';
-  principal: Principal;
+  status: TaskStatus;
+  principal: Principal; // resume ALWAYS preserves this — never the answerer's authority (#28)
   trigger: TriggerKind;
   context: unknown; // accumulated agent context
-  openQuestion?: string; // set when paused on a clarification_request (§7.3)
+  pause?: PausePayload; // set when paused
+  version: number; // optimistic lock — resume is single-consumer + idempotent (no double side-effecting runs, #27)
+  leaseUntil?: string; // a worker leases the row to resume; a watchdog only re-queues after the lease lapses
   createdAt: string;
   updatedAt: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Conversation / thread state (the source of `recentThread`, §7.1) — was specified nowhere
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface Thread {
+  id: string;
+  ownerId: string; // RBAC-scoped; shareable per §7.1
+  title?: string;
+  createdAt: string;
+}
+
+export interface Message {
+  id: string;
+  threadId: string;
+  role: 'user' | 'brain';
+  content: string;
+  answerRef?: string; // provenance-labelled answer id, for 'brain' turns
+  principal: Principal;
+  createdAt: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Feedback, suggestions, standing approvals (tables the later issues assumed)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 👍/👎/"this is wrong" — feeds decay's feedback_score AND the wrong→invalidate split (§4.6). */
+export interface Feedback {
+  id: string;
+  targetId: string; // answer or memory id
+  userId: string;
+  kind: 'up' | 'down_not_useful' | 'down_wrong'; // down_wrong → invalidate (§4.4), not decay
+  createdAt: string;
+}
+
+/** A self-improvement proposal (#33). Evidence is typed so admin approval isn't a rubber-stamp. */
+export interface Suggestion {
+  id: string;
+  targetConfigKey?: string;
+  current?: number | string;
+  proposed?: number | string;
+  evidence: {
+    fixtureScoreBefore: number;
+    fixtureScoreAfter: number; // computed by the eval harness (#32) — the arbiter, not live metrics
+    supportingSample: string[]; // miss/rejection refs
+    costDeltaUsd?: number;
+  };
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: string;
+}
+
+/** "unless a standing approval exists" — per-user, per-action-type grant for the confirmation gate (#26). */
+export interface StandingApproval {
+  id: string;
+  userId: string;
+  actionType: string; // e.g. 'send_email'
+  scope?: string; // optional narrowing (e.g. a specific client)
+  expiresAt?: string;
+  createdAt: string;
 }
 
 /** One structured trace span. Powers activity log, cost + quality monitors (§6.9, §11). */

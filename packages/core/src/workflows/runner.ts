@@ -20,7 +20,22 @@ export interface WorkflowDef {
   steps: WorkflowStep[];
 }
 
+/**
+ * Variable resolution + condition evaluation are a BOUNDED sub-language, specified so it can't creep into
+ * Turing-completeness (#34):
+ *   - scope: `trigger.*` (the trigger payload) and `<stepId>.output` (prior step results) ONLY.
+ *   - `{{ ... }}` is variable substitution, not code.
+ *   - `condition` is a WHITELISTED grammar: comparisons (`>`, `<`, `==`, `!=`, `>=`, `<=`) on a variable vs a
+ *     literal. No function calls, no arithmetic, no `eval`. A safe parser, never `new Function`.
+ */
+export function resolveTemplate(_tmpl: string, _scope: Record<string, unknown>): string {
+  throw new Error('TODO: resolveTemplate'); // {{trigger.contact.name}} / {{researcher.output}}
+}
+export function evalCondition(_expr: string, _scope: Record<string, unknown>): boolean {
+  throw new Error('TODO: evalCondition'); // whitelisted comparisons only — no eval
+}
+
 export async function runWorkflow(_def: WorkflowDef, _principal: Principal): Promise<unknown> {
-  // TODO: interpret steps; anything needing real logic happens INSIDE an agent step, not in the DSL.
+  // TODO: interpret steps; resolveTemplate inputs; evalCondition guards; real logic happens INSIDE an agent step.
   throw new Error('TODO: runWorkflow');
 }

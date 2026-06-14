@@ -151,7 +151,7 @@ A cron job (configurable, default weekly Sunday 3am) recomputes `utility_score` 
 
 So the decay cron only ever touches episodic and (gently) semantic memories. Procedural is outside its scope — there is no path by which an SOP silently disappears.
 
-**Episodic is only reaped once it has a confirmed semantic child.** The "episodic can fade because consolidation distilled it" logic assumes consolidation is complete — but it never is (it has recall gaps). So aggressive episodic decay must require that an *active* semantic memory actually back-references the record (`source_refs`); episodic with **no** consolidated child decays slowly and flags for review rather than hard-invalidating on age alone. Otherwise a consolidation miss becomes permanent data loss — exactly principle #1's silent failure. A **consolidation-coverage metric** (aging episodic with no semantic child) on the Quality Monitor (§11.8) turns that gap into a visible number.
+**Episodic is only reaped once it has a confirmed semantic child.** The "episodic can fade because consolidation distilled it" logic assumes consolidation is complete — but it never is (it has recall gaps). So aggressive episodic decay must require that an *active* semantic memory actually back-references the record; episodic with **no** consolidated child decays slowly and flags for review rather than hard-invalidating on age alone. *The back-reference is a **typed, queryable relation** (a `memory_links` edge `kind = consolidated_child`), not a flat `source_refs` string array — otherwise the decay guard has no column to ask "does an active semantic memory reference this?" and the silent-data-loss guard is itself unbuildable.* Otherwise a consolidation miss becomes permanent data loss — exactly principle #1's silent failure. A **consolidation-coverage metric** (aging episodic with no semantic child) on the Quality Monitor (§11.8) turns that gap into a visible number.
 
 *Exempt from decay ≠ exempt from review.* An SOP can still be flagged for human review if it looks stale (references a disconnected tool, unconfirmed for a long period). Flagging asks a human "is this still true?"; it never auto-invalidates. The system never throws away a playbook on its own.
 
@@ -325,6 +325,8 @@ The user never has to decide "am I asking or commanding" — they just talk to i
 
 > Divergence from Claude chat to keep in mind: this is multi-user, shared-brain, and permission-scoped. Each message's retrieval is filtered to the asker's clearance; threads may be shareable per RBAC. The familiar UX hides a much more complex backend.
 
+**Conversation state is a real, persisted store** (`threads` + `messages`), not working memory (which never persists, §4.1). It is the source of the "recent thread" fed into context assembly *and* the intent router — without it the router cannot resolve a follow-up like "do it" → *do what?*. Threads are owned by a user and RBAC-shareable.
+
 ### 7.2 Agents
 
 Configurable agents (researcher, scorer, email-writer, analyst, etc.), each with a persona/prompt, an allowed tool set, assigned skills, and memory access scoped by RBAC. Each agent also carries an explicit **capability manifest** — `whenToUse` (the routing line), `capabilities` tags, `inputs`/`outputs`, and `exampleGoals` — which is what the orchestrator reads to pick it (§7.3). Routing quality depends entirely on these manifests, so they are a first-class, structured part of an agent's definition, not free text. An agent's *actions* are authorized as `intersection(allowed tools, the run's principal permissions)`, with a confirmation gate on irreversible/external actions (§9.2). **Trust score** = a rolling success / rejection / error rate weighted by human feedback; below a configurable threshold an agent is **constrained** (outputs require approval before commit), and lower still it is **quarantined** (disabled).
@@ -334,6 +336,8 @@ Configurable agents (researcher, scorer, email-writer, analyst, etc.), each with
 A core capability: an orchestrator agent can decompose a goal and **delegate to sub-agents**, which can themselves sub-delegate. The system exposes the live delegation tree (who is coordinating whom, who handed what to whom) and a delegation log. This is central to the pitch — "multi-agent" must be visible and real, not implied.
 
 **How a sub-goal reaches the right agent (routing).** Two stages, cheap-to-expensive: (1) a deterministic **pre-filter** narrows the roster by capability-tag overlap + RBAC (the run's principal/clearance + each agent's `allowedRoles`), producing a *small* candidate set; (2) the orchestrator LLM then plans and sequences over those candidates' manifests (`whenToUse`/`exampleGoals`). A small candidate set is what keeps planning both cheap and reliable. **Keep trees shallow:** delegation depth is bounded by `orchestrator_max_depth` (default 3) — deep trees are where cost and debuggability fall apart, so start flat and only deepen when a goal genuinely needs it.
+
+**One human-in-the-loop interrupt primitive, used three ways.** Clarification (a stuck sub-agent), action confirmation (an irreversible/external tool call, §9.2), and trust-constrained approval (a low-trust agent, §7.2) are the *same* mechanism — pause to durable `task_state`, surface to the Inbox, **resume idempotently**. Build it once, not three times. Resume is **single-consumer and idempotent** (an optimistic `version` + a lease on the row): a concurrent resume or a watchdog re-queue must never run the same side-effecting tool call twice, and resume **always preserves the original run's principal** — an answer from a lower-cleared human can unblock a task but never escalate its authority.
 
 **Stuck sub-agents ask, they don't silently fail or guess.** When a sub-agent hits irreducible ambiguity or a tool failure past its retry cap, it emits a typed `clarification_request` and **pauses** to durable `task_state` (§4.1) rather than confabulating an answer. Resolution ladder: the orchestrator first tries to answer from memory/context; if it can't, it escalates to a human via the inbox (per the Agent Settings turn-cap/escalation, PRD §6.6); the answer is injected back and the task **resumes from the pause**. This is the *only* agent-directed input surface — there is deliberately **no per-agent chat** ("talk to one agent") view. The unified front door (§7.1) covers asking; answering a stuck task's question covers the rest.
 
@@ -442,7 +446,7 @@ tests/
 
 **Plugin registration:** at boot, based on tenant ID from environment.
 
-**Plugin fault isolation:** Client A's plugin failure must not affect Client B's runtime. (See open fork in §11 — instance-per-client makes this nearly free; shared-instance makes it something to engineer.)
+**Plugin fault isolation.** *Cross-client* isolation is free: instance-per-client (one Railway service + Supabase project each, §8.1a) means Client A's plugin cannot touch Client B's runtime. The *real* work is **in-process** isolation within one client: a plugin that throws at `register()`, leaks an unhandled rejection, or blocks the event loop must not crash that client's engine — so plugin load/register is wrapped in try/catch and, on failure, the engine **boots core-only + raises a System Health alert** rather than failing closed-down (#35).
 
 ### 8.3 The escalation ladder (the discipline that keeps this healthy)
 
@@ -490,6 +494,8 @@ Permission-aware retrieval is the highest-stakes correctness property in the sys
 - **Sensitivity level** — an ordinal scale (`1` internal → `5` restricted), comparable, so the check is a simple `≤`.
 - **Clearance** — a row per user (defaults inherited from role, per-user overrides allowed): `{ allowed_zones[], max_sensitivity }`. It lives in the **engine's authorization layer**, never in Supabase Auth (the auth-vs-authz split, §8.1a). Empty `allowed_zones` ⇒ sees nothing (fail-closed).
 - **The retrieval filter** is therefore literally: `zone ∈ user.allowed_zones AND sensitivity ≤ user.max_sensitivity AND namespace ∈ query_namespaces`. Applied in the query predicate *before* ranking (§4.7), never post-filtered. **This filter is identical for `memories` and `chunks`** — every retrievable row carries zone + sensitivity; only the lifecycle differs (§4.2).
+- **The empty-set fail-OPEN trap.** An empty `allowed_zones` must compile to `WHERE false`, never an empty `zone IN ()` — that is a Postgres syntax error, and an ORM that silently drops an empty `IN` returns **everything**. This single edge case is the most likely way the highest-stakes property fails *open*; it carries an explicit `denyAll` flag and a test.
+- **Clearance is keyed to the auth identity.** A user's clearance row is keyed on the Supabase Auth user id (`principal_id`). A **missing** row ⇒ deny (a brand-new user sees nothing), which is deliberately distinct from an *empty-zones* row; provisioning seeds the first admin's clearance so a fresh brain isn't locked out of itself (see onboarding, §10.3).
 
 ### 9.2 Action authorization (the write side)
 
@@ -511,7 +517,7 @@ Permission changes are the highest-value class of event in the audit log.
 
 **Connection scope ≠ data visibility.** An org-wide connection ingests broadly, but each user only ever sees what their permissions allow.
 
-**Each connection carries a trust level** (high: internal SoRs, manual upload; low: inbound external email, web). Trust gates promotion to semantic memory (the anti-poisoning rule, §5) — not what gets ingested, but what gets *believed*.
+**Each connection carries a trust level** (high: internal SoRs, manual upload; low: inbound external email, web). Trust gates promotion to semantic memory (the anti-poisoning rule, §5) — not what gets ingested, but what gets *believed*. **The connection's trust level is stamped onto each item's provenance at routing time** — if that stamp is dropped, the anti-poisoning field defaults wrong and the gate silently no-ops, so it is an explicit step, not an assumption.
 
 **Token selection is principal-driven (§7.5).** When an agent needs a per-user integration, it uses the run's principal's token — and only a user-principal has one. System-triggered runs have no per-user token and use org connections exclusively. This is enforced, not advisory.
 

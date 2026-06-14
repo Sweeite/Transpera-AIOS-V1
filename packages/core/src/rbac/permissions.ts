@@ -10,13 +10,25 @@ export async function getClearance(_principal: Principal): Promise<Clearance> {
   throw new Error('TODO: getClearance');
 }
 
-/** The retrieval predicate (applied in SQL BEFORE ranking; same for memories and chunks, §9.1). */
+/**
+ * The retrieval predicate (applied in SQL BEFORE ranking; same for memories and chunks, §9.1).
+ *
+ * FAIL-OPEN TRAP (the worst leak, §3.2): an EMPTY `allowedZones` must compile to `WHERE false`,
+ * NEVER an empty `zone IN ()` — that's a Postgres syntax error, and an ORM that silently drops an
+ * empty IN clause returns EVERYTHING. The SQL builder MUST special-case the empty list. (#9)
+ */
 export function buildRetrievalPredicate(c: Clearance, namespaces: Namespace[]): {
   zones: Zone[];
   maxSensitivity: SensitivityLevel;
   namespaces: Namespace[];
+  denyAll: boolean; // true ⇒ emit `WHERE false`; the query layer must honour this before any IN clause
 } {
-  return { zones: c.allowedZones, maxSensitivity: c.maxSensitivity, namespaces };
+  return {
+    zones: c.allowedZones,
+    maxSensitivity: c.maxSensitivity,
+    namespaces,
+    denyAll: c.allowedZones.length === 0 || namespaces.length === 0,
+  };
 }
 
 /** Action authorization = intersection(agent allowed tools, principal permissions) (§9.2). */
