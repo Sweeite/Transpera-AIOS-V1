@@ -3,6 +3,7 @@
 // Harness (the AI runtime, PRD §6)
 export * as gateway from './harness/gateway.js';
 export * as retrieval from './harness/retrieval.js';
+export * as synthesis from './harness/synthesis.js';
 export * as context from './harness/context.js';
 export * as provenance from './harness/provenance.js';
 export * as tools from './harness/tools.js';

@@ -21,6 +21,7 @@
  *         resolution lands; then `deps.floor ?? await getConfig('retrieval_min_relevance', ns)`.
  */
 import { createHash } from 'node:crypto';
+import type { Provenance } from '@aios/shared';
 import { embed as gatewayEmbed, type Embedder } from './gateway.js';
 import { defaultFor } from '../config/system-config.js';
 
@@ -40,6 +41,8 @@ export interface RetrievedMemory {
   type: string;
   statement: string;
   contentHash: string;
+  provenance: Provenance; // refs-only (§11.10); the answer surface reads sourceRefs + capturedAt to render
+  //                         "I know this" + source + as-of (#5). Additive to #4 — the column already exists.
   embeddingModel: string;
   embeddingVersion: string;
   createdAt: string;
@@ -123,7 +126,7 @@ export async function retrieve(queryText: string, deps: RetrieveDeps): Promise<R
   // ONE query: filter (predicate) → rank (`<=>` cosine distance) → cap. NEVER retrieve-then-filter (#13 just
   // swaps `true` for the permission fragment; the param placeholders it adds start AFTER $1/$2 used here).
   const { rows } = await deps.query(
-    `SELECT id, namespace, zone, sensitivity_level, type, statement, content_hash,
+    `SELECT id, namespace, zone, sensitivity_level, type, statement, content_hash, provenance,
             embedding_model, embedding_version, created_at,
             (embedding <=> $1::vector)::float8 AS distance
        FROM memories
@@ -141,6 +144,7 @@ export async function retrieve(queryText: string, deps: RetrieveDeps): Promise<R
     type: r.type,
     statement: r.statement,
     contentHash: r.content_hash,
+    provenance: r.provenance, // jsonb → Provenance (refs only); rows inserted with '{}' simply carry no refs
     embeddingModel: r.embedding_model,
     embeddingVersion: r.embedding_version,
     createdAt: new Date(r.created_at).toISOString(),

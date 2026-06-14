@@ -2,7 +2,8 @@
  * LLM gateway — the single chokepoint through which EVERY model call passes (PRD §6.1).
  * Core, never plugins: model choice, fallback, embedding pinning, key isolation, cost tracking (§8.2).
  */
-import type { TraceSpan } from '@aios/shared';
+import { z } from 'zod';
+import { defaultFor } from '../config/system-config.js';
 
 export type TaskClass = 'classify' | 'summarise' | 'extract' | 'reason' | 'synthesize';
 
@@ -14,28 +15,112 @@ export type TaskClass = 'classify' | 'summarise' | 'extract' | 'reason' | 'synth
  */
 export type Embedder = (texts: string[]) => Promise<number[][]>;
 
-export interface CallOptions {
+export interface CallOptions<T = string> {
   taskClass: TaskClass; // drives multi-provider routing (cheap vs strong), quality-gated by eval fixtures
   system?: string; // stable prefix → prompt-cached (~90% off cached input tokens, §5.3)
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
-  /** When set, the model is forced to structured output validated against this schema (repair-or-fail). */
-  schema?: unknown; // zod schema
-  stream?: boolean;
+  /** When set, the model is FORCED to emit structured output validated against this zod schema. */
+  schema?: z.ZodType<T>;
+  stream?: boolean; // #10 — streaming not wired in the M0 minimal call
+}
+
+/** What the gateway genuinely knows about a call. #10 folds this into a full `TraceSpan` with the run context
+ *  (taskId / principal / trigger) the gateway does not own, and computes costUsd via the pricing table. */
+export interface ModelUsage {
+  model: string;
+  tokensIn?: number;
+  tokensOut?: number;
+  durationMs: number;
 }
 
 export interface CallResult<T = string> {
   output: T;
-  span: TraceSpan;
+  usage: ModelUsage;
 }
 
+// The forced-tool name the structured path uses. The model is required to call exactly this tool, so its
+// validated input IS the structured output — far more reliable than "return JSON + parse" (which matters
+// because repair is deferred to #10).
+const STRUCTURED_TOOL_NAME = 'emit_structured_output';
+
 /**
- * Route → call → (fallback on error/timeout, bounded retries) → parse/validate → emit cost+trace.
- * Never emits silent malformed output: structured calls repair-or-fail.
+ * MINIMAL M0 model call (Issue #5) — the single chokepoint for generation, mirroring `embed` below.
+ *
+ * Direct REST (fetch), no provider SDK imported → the #46 chokepoint test stays green. Structured calls use
+ * Anthropic FORCED TOOL-USE (tool_choice) + zod validation of the tool input; malformed/empty output FAILS
+ * LOUD (no silent malformed output, no repair yet). One pinned model — #10 adds the TaskClass routing table,
+ * BYO keys, fallback chain, prompt caching, repair-or-fail retry, and the per-call cost → cost monitor (§11.7).
  */
-export async function callModel<T = string>(_opts: CallOptions): Promise<CallResult<T>> {
-  // TODO: model routing table by TaskClass; per-client BYO keys; fallback chain; prompt caching;
-  // structured-output validation (zod) with repair-or-fail; per-call token+cost → cost monitor (§11.7).
-  throw new Error('TODO: callModel');
+export async function callModel<T = string>(opts: CallOptions<T>): Promise<CallResult<T>> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error('ANTHROPIC_API_KEY is not set — callModel cannot run (fail loud, never a silent empty answer).');
+  }
+
+  const maxTokens = defaultFor('generation_max_tokens') as number;
+  const body: Record<string, unknown> = {
+    model: GENERATION_MODEL,
+    max_tokens: maxTokens,
+    messages: opts.messages,
+    ...(opts.system ? { system: opts.system } : {}),
+  };
+
+  if (opts.schema) {
+    // JSON Schema for the tool input. Strip `$schema` — Anthropic wants a bare input_schema object.
+    const jsonSchema = z.toJSONSchema(opts.schema) as Record<string, unknown>;
+    delete jsonSchema.$schema;
+    body.tools = [
+      {
+        name: STRUCTURED_TOOL_NAME,
+        description: 'Return the answer in exactly this structure. You MUST call this tool.',
+        input_schema: jsonSchema,
+      },
+    ];
+    body.tool_choice = { type: 'tool', name: STRUCTURED_TOOL_NAME }; // FORCE the tool — no free-text escape
+  }
+
+  const startedAt = Date.now();
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const durationMs = Date.now() - startedAt;
+
+  if (!res.ok) {
+    // Surface status only — never the prompt/messages content (no content in errors/logs, §11.10).
+    const detail = await res.text().catch(() => '');
+    throw new Error(`callModel failed: ${res.status} ${res.statusText} ${detail.slice(0, 200)}`);
+  }
+
+  const json = (await res.json()) as {
+    content?: Array<{ type: string; name?: string; text?: string; input?: unknown }>;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  };
+  const usage: ModelUsage = {
+    model: GENERATION_MODEL,
+    durationMs,
+    ...(json.usage?.input_tokens !== undefined ? { tokensIn: json.usage.input_tokens } : {}),
+    ...(json.usage?.output_tokens !== undefined ? { tokensOut: json.usage.output_tokens } : {}),
+  };
+
+  if (opts.schema) {
+    const block = json.content?.find((b) => b.type === 'tool_use' && b.name === STRUCTURED_TOOL_NAME);
+    if (!block) {
+      throw new Error('callModel: forced tool-use returned no tool_use block (refusing to surface a malformed answer).');
+    }
+    // zod-validate the tool input — throws LOUD on any mismatch (the structural guarantee; #10 adds repair).
+    const output = opts.schema.parse(block.input);
+    return { output, usage };
+  }
+
+  // Plain-text path (no schema): concatenate text blocks. `T` is `string` here.
+  const text = (json.content ?? []).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('');
+  return { output: text as unknown as T, usage };
 }
 
 /**
@@ -102,6 +187,13 @@ export async function embed(texts: string[]): Promise<number[][]> {
 // ❗ Changing the model OR the dim later = re-embed every existing client's corpus + re-derive the floor.
 //    While "0-provisional" and no client data exists, that cost is ~zero — which is exactly why we defer.
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// GENERATION MODEL — the M0 minimal `callModel` pin. Generation is Claude-first (Brief §12); embeddings stay
+// pinned to OpenAI (above). So #10 adds the TaskClass routing table ON Anthropic, not a provider swap. Haiku
+// 4.5 is the cheap synthesis tier; #10 routes stronger tiers (Sonnet/Opus) for harder TaskClasses.
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+export const GENERATION_MODEL = 'claude-haiku-4-5-20251001'; // Haiku 4.5 — cheap synthesis; #10 adds routing
+
 export const EMBEDDING_MODEL = 'text-embedding-3-large'; // PROVISIONAL (#1) — real pin deferred to #43
 export const EMBEDDING_DIM = 1024; // → vector(1024) + HNSW in #2; one-way door once a corpus is embedded
 export const EMBEDDING_DTYPE = 'float' as const; // un-quantized v0; int8/binary trade decided in #3

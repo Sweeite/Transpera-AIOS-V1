@@ -23,6 +23,9 @@ importers:
       vitest:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@20.19.43)(lightningcss@1.32.0)
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
 
   apps/brain:
     dependencies:
@@ -104,7 +107,7 @@ importers:
         version: link:../shared
       drizzle-orm:
         specifier: '*'
-        version: 0.45.2(@electric-sql/pglite@0.5.2)
+        version: 0.45.2(@electric-sql/pglite@0.3.16)
       zod:
         specifier: '*'
         version: 4.4.3
@@ -220,9 +223,6 @@ packages:
 
   '@electric-sql/pglite@0.3.16':
     resolution: {integrity: sha512-mZkZfOd9OqTMHsK+1cje8OSzfAQcpD7JmILXTl5ahdempjUDdmg4euf1biDex5/LfQIDJ3gvCu6qDgdnDxfJmA==}
-
-  '@electric-sql/pglite@0.5.2':
-    resolution: {integrity: sha512-y6ySdFE7FQB7BkVaSNaPINgY7mXCyvi+3GQB5ySX9WGwgrdh31WXMP5RM40oAyYff47lIr7xdcW8UbCW5NHDmw==}
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -1749,9 +1749,6 @@ snapshots:
 
   '@electric-sql/pglite@0.3.16': {}
 
-  '@electric-sql/pglite@0.5.2':
-    optional: true
-
   '@esbuild/aix-ppc64@0.21.5':
     optional: true
 
@@ -2328,9 +2325,9 @@ snapshots:
       '@babel/runtime': 7.29.7
       csstype: 3.2.3
 
-  drizzle-orm@0.45.2(@electric-sql/pglite@0.5.2):
+  drizzle-orm@0.45.2(@electric-sql/pglite@0.3.16):
     optionalDependencies:
-      '@electric-sql/pglite': 0.5.2
+      '@electric-sql/pglite': 0.3.16
 
   electron-to-chromium@1.5.372: {}
 
