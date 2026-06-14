@@ -70,6 +70,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #1 — Spike & pin the embedding model 🧠 `harness` `eval`
 **M0** · **deps:** none · **Spec:** Brief §4.7, tech-stack §5.5
+**⚠ Audit fix (Tier 2):** Calibrate the *v1 dense-cosine* floor explicitly; re-derive `retrieval_min_relevance` when #14 lands (different scale — a recalibration, not a reuse).
 **Context.** Changing the embedding model later means re-embedding every client's corpus and re-calibrating the floor — the single most expensive decision to reverse. Get it right before anything sits on top.
 **Tasks.**
 - [ ] Assemble a sample of real agency content (emails, SOPs, meeting notes, client facts) + ~30 question→expected pairs.
@@ -84,6 +85,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #2 — Minimal `memories` + `chunks` tables with pgvector ⚙️ `infra` `memory`
 **M0** · **deps:** #1 · **Spec:** Brief §4.2, §4.7
+**⚠ Audit fix (Tier 3):** `vector(N)` is fixed by #1's model; a dimension change is a full re-embed (not expand/contract). Block on #1.
 **Context.** A thin slice of the full schema (#7) — just enough to store and search vectors for the demo.
 **Tasks.**
 - [ ] `memories` + `chunks` with `zone`, `sensitivity_level`, `namespace`, `embedding_model/version`, `content_hash`, vector column.
@@ -109,6 +111,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #4 — `retrieve()` + abstention (no permissions yet) 🧠 `harness`
 **M0** · **deps:** #3 · **Spec:** Brief §4.7, §6
+**⚠ Audit fix (Tier 2):** Abstention score = **top-1 pre-fusion dense cosine** in v1, never the RRF sum; mark the seam #14 swaps.
 **Context.** The read half: find relevant memory or abstain. Permission filtering arrives in #13 — keep the seam.
 **Tasks.**
 - [ ] Implement `retrieve()` (dense-only is fine here) returning candidates + a score.
@@ -121,6 +124,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #5 — `labelAnswer()` per-claim provenance (minimal) — THE DEMO 🧠 `harness`
 **M0** · **deps:** #4 · **Spec:** Brief §6, PRD §6.5
+**⚠ Audit fix (Tier 3):** Add a structural citation guard: reject/relabel any claim whose `sourceId ∉ retrieved set` (semantic support-check is #24).
 **Context.** Render an honest answer: cite the retrieved memory per claim; mark uncited text as inference; show the abstention copy when nothing clears the floor.
 **Tasks.**
 - [ ] Generate an answer that cites source ids per claim (structured output).
@@ -150,6 +154,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #7 — Full Drizzle schema + per-tenant connection 🔒 `infra` `core`
 **M1** · **deps:** #2 · **Spec:** tech-stack §2, §5.4; Brief §4, §9
+**⚠ Audit fix (Tier 1):** Add the 8 audit tables; **worker uses `DATABASE_URL_SESSION` (session-mode)** — transaction-mode pooling breaks pgmq/LISTEN/advisory-locks; define `content_hash` over normalized text **+ namespace**.
 **Context.** Everything sits on this. One Postgres per client; the engine connects to exactly one tenant.
 **Tasks.**
 - [ ] Define all tables in `db/schema.ts`: memories(+slots), chunks, connector_schemas, connections(+trust_level), identity_map, ingestion_log, inbox_items, task_state, user_clearance, roles, system_config, traces, audit_log.
@@ -164,6 +169,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #8 — `system_config` service (gated/scoped/bounded/audited) ⚙️ `core`
 **M1** · **deps:** #7 · **Spec:** Brief §4.8, PRD §6.11
+**⚠ Audit fix (Tier 3):** Pending changes don't take effect; one open proposal per key; bounds live in `KNOWN_KEYS` (single source, DB stores only values).
 **Context.** The config *is* the system's correctness; a fat-fingered floor of 0.99 is a self-inflicted silent failure.
 **Tasks.**
 - [ ] `getConfig(key, namespace?)` with client→org resolution and range clamping.
@@ -176,6 +182,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #9 — RBAC clearance model + fail-closed filter 🔒🧠 `rbac` `core`
 **M1** · **deps:** #7 · **Spec:** Brief §9.1, PRD; tech-stack §5.5
+**⚠ Audit fix (Tier 1):** Empty `allowed_zones` → `WHERE false` (the `denyAll` flag), never empty `IN`; test it; co-verify "applied in SQL" with #13.
 **Context.** The highest-stakes correctness property in the system (principle #2). Define the data model concretely, not "filter somehow."
 **Tasks.**
 - [ ] `user_clearance` (`{allowed_zones[], max_sensitivity}`) + `roles` (default clearance per role, per-user overrides).
@@ -188,6 +195,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #10 — LLM gateway: routing, fallback, structured output, caching, cost 🧠 `harness` `core`
 **M1** · **deps:** #1 · **Spec:** PRD §6.1, tech-stack §5.3
+**⚠ Audit fix (Tier 3):** Repair loop bounded (1 attempt → escalate to fallback model → fail); prompt-cache is a per-provider adapter concern, not one flag.
 **Context.** The single chokepoint every model call passes through. Core, never plugins.
 **Tasks.**
 - [ ] `callModel()`: route by `TaskClass` across providers; fallback chain + bounded retries with backoff.
@@ -201,6 +209,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #11 — Tracing + audit (two stores) 🔒 `core` `ops`
 **M1** · **deps:** #7 · **Spec:** PRD §6.9, Brief §11.10
+**⚠ Audit fix (Tier 3):** Tamper-evidence = hash chain (`prev_hash`) + `verifyChain()`, or explicitly descope and soften the acceptance.
 **Context.** Debuggability vs privacy: traces may hold content but ephemerally; the audit log never holds content.
 **Tasks.**
 - [ ] `emitSpan()` → `traces` with TTL + clearance tag; auto-prune job.
@@ -212,6 +221,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #46 — Architecture test: enforce the gateway chokepoint 🔒 `eval` `core`
 **M1** · **deps:** #10 · **Spec:** Brief §11.8 (watching the watchers)
+**⚠ Audit fix (Tier 3):** Add embedding-provider SDKs to the forbidden list; catch `import()`/`require()`, not just static `import`; note hostname-level enforcement as a known gap.
 **Context.** Cost/trace completeness depends on "nothing calls a model directly." A rogue `import Anthropic` somewhere = untracked cost + untraced calls — a silent failure of the observability layer itself.
 **Tasks.**
 - [ ] Implement `tests/core/no-direct-model-calls.test.ts`: walk `packages/**/*.ts`, fail on any provider-SDK import outside `gateway.ts`.
@@ -239,6 +249,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #13 — Selectivity-aware filtered ANN + RRF 🔒🧠 `harness` `memory`
 **M2** · **deps:** #9, #10 · **Spec:** Brief §4.7, §9.1
+**⚠ Audit fix (Tier 1):** Use `rrf_k` + `exact_search_max_rows`; name the selectivity-estimation method; write the **v1 pre-reranker** floor path into `retrieval.ts` (not just §6.4 prose).
 **Context.** "Fail-closed at the vector layer" is one of the hard problems in vector search; pgvector HNSW + a selective filter silently collapses recall. Solve it explicitly.
 **Tasks.**
 - [ ] Apply the permission predicate in SQL before ranking.
@@ -252,6 +263,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #14 — Reranker floor 🧠 `harness` `eval`
 **M2** · **deps:** #13 · **Spec:** Brief §4.7
+**⚠ Audit fix (Tier 2):** Name the calibration procedure (held-out labelled set + target metric); pin `reranker_model`+`version` the floor binds to.
 **Context.** RRF discards score magnitude, so the abstention decision must be made on a calibrated score.
 **Tasks.**
 - [ ] Add a cross-encoder reranker over the top-N fused candidates (hosted API or service behind the gateway).
@@ -292,6 +304,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #16 — Identity Map (entity resolution) 🧠 `ingestion` `memory`
 **M3** · **deps:** #7 · **Spec:** Brief §4.10, PRD §6.12
+**⚠ Audit fix (Tier 1):** `resolveEntity({mention, namespaceHint}) → {entity, confidence}|null`; use `entity_resolution_min_confidence`; seed-time cross-SoR merge uses the **same** similarity+floor primitive.
 **Context.** Resolves a mention → canonical entity + per-SoR ids; needed on both write (namespacing) and read (federation). Canonical ids internal, SoR ids mirrored.
 **Tasks.**
 - [ ] `identity_map` table; `resolveEntity(mention)` (fuzzy match, `null` if unresolved).
@@ -304,6 +317,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #17 — Routing gates 1–4 🔒🧠 `ingestion` `core`
 **M3** · **deps:** #16, #10, #44 · **Spec:** Brief §5, PRD §6.3
+**⚠ Audit fix (Tier 1):** Stamp `connection.trust_level → Provenance.trustLevel` in the after-write block; Gate-3 pre-classifier is its own sub-task (labelled set, `gate3_preclassifier_threshold`, false-negative audit via #19).
 **Context.** The operational heart of ingestion — the spine rule made executable. Cheap-to-expensive gate ordering keeps cost sane.
 **Tasks.**
 - [ ] Gate 1 drop (do-not-ingest + sensitivity labels) — deterministic.
@@ -318,6 +332,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #18 — Anti-poisoning trust gate 🔒 `ingestion` `harness`
 **M3** · **deps:** #17 · **Spec:** Brief §5, PRD §6.7
+**⚠ Audit fix (Tier 1):** `corroborate()` is **computed** (shared with consolidation dedup, `corroboration_similarity_threshold`), not a boolean input; name the injection-scan approach (LLM classifier + denylist v1).
 **Context.** Ingested content becomes memory later retrieved as trusted "I know this." Without a trust gate, provenance launders injected content.
 **Tasks.**
 - [ ] Use connection `trust_level`; low-trust content may index-in-place but not auto-promote to semantic without corroboration or human review.
@@ -329,6 +344,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #20 — Connectors v1 (one structured + one unstructured) ⚙️ `ingestion`
 **M3** · **deps:** #44, #17 · **Spec:** Brief §10
+**⚠ Audit fix (Tier 2):** Define the `fetchLive` field-name normalization contract shared by `schema()`, `fetchLive()`, and `connector_schemas`.
 **Context.** Prove the adapter interface with two real connectors of different kinds.
 **Tasks.**
 - [ ] Implement a structured connector (e.g. a CRM): `schema()`, field-tagged `sync()`, `fetchLive()`.
@@ -341,6 +357,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #19 — Ingestion-decision log + sampled audit 🧠 `ingestion` `eval`
 **M3** · **deps:** #17 · **Spec:** Brief §5, §11.3, §11.8
+**⚠ Audit fix (Tier 2):** Miss↔ingestion cross-check: embed the miss → ANN over `chunks` + re-fetch flagged decision-log refs.
 **Context.** You can't measure what you never ingested — this is the bridge that makes wrong-drops visible.
 **Tasks.**
 - [ ] Write an `IngestionDecision` (source-ref + content-hash + confidence) for every gate outcome.
@@ -368,6 +385,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #22 — Intent router (query vs command) 🧠 `core`
 **M4** · **deps:** #10 · **Spec:** Brief §7.1, PRD §4.1
+**⚠ Audit fix (Tier 1):** Symmetric confidence on both arms; `intent_min_confidence` → clarify-back; needs `recentThread` (#48); intent fixtures (#32); destructive stop delegated to #26.
 **Context.** One box; the user never decides "asking vs commanding."
 **Tasks.**
 - [ ] `routeIntent(message)` — cheap model or heuristic+small model → `query` | `command`(+confidence).
@@ -400,6 +418,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #24 — Conditional provenance verification 🧠 `harness` `eval`
 **M4** · **deps:** #5, #14 · **Spec:** PRD §6.5, tech-stack §5.3
+**⚠ Audit fix (Tier 3):** Add `Claim.confidence`; verify-trigger = `sensitivity ≥ verify_sensitivity_threshold OR forAction OR confidence < t`.
 **Context.** Confirm cited claims are actually supported — but only when it's worth the cost.
 **Tasks.**
 - [ ] Verification pass that checks each cited claim against its cited source.
@@ -426,6 +445,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #26 — Single-agent runner + tool loop + action authz 🔒🧠 `agents` `harness`
 **M5** · **deps:** #10, #9, #25 · **Spec:** Brief §7.2, §9.2, PRD §6.6
+**⚠ Audit fix (Tier 1):** Confirmation reuses the interrupt primitive (`paused_awaiting_confirmation` + preview payload); add the `standing_approvals` store.
 **Context.** Agents act — the bigger blast radius than a leaked read. This also defines the **agent registry + capability manifest** that routing (#27) depends on.
 **Tasks.**
 - [ ] Define `AgentManifest` (`whenToUse`, `capabilities`, `inputs`/`outputs`, `exampleGoals`, `allowedTools`, `allowedRoles`) + the registry (`registerAgent`/`getAgent`/`listAgents`).
@@ -439,6 +459,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #27 — Orchestrator + delegation tree + clarification interrupt 🧠 `agents`
 **M5** · **deps:** #26 · **Spec:** Brief §7.3
+**⚠ Audit fix (Tier 1):** Idempotent resume (`version`/`lease_until`, resume-via-queue, answer-already-applied guard); add a routing-accuracy fixture suite (goal → expected agent).
 **Context.** Multi-agent must be visible and real. Stuck sub-agents ask, not guess. **Routing quality depends entirely on the agent manifests (#26)** — this is the one agent-layer detail to nail.
 **Tasks.**
 - [ ] `candidatesFor(goal, principal, clearance)`: deterministic pre-filter by capability tags + RBAC → small candidate set; the LLM planner picks/sequences over those manifests (`whenToUse`/`exampleGoals`).
@@ -453,6 +474,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #28 — Inbox (the single push destination) 🧠 `agents` `frontend`
 **M5** · **deps:** #25, #9 · **Spec:** Brief §7.5
+**⚠ Audit fix (Tier 1):** Resume keeps the **original** `task_state.principal`; answerer-authz check; treat the injected answer as low-trust (can unblock, not escalate).
 **Context.** Everything the system pushes to a person lands here — briefs, clarification requests, alerts, suggestions.
 **Tasks.**
 - [ ] `inbox_items` (typed, permission-scoped); list/answer/approve/dismiss/open.
@@ -465,6 +487,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #29 — Trust scores ⚙️ `agents`
 **M5** · **deps:** #26 · **Spec:** Brief §7.2
+**⚠ Audit fix (Tier 2):** Trust formula (window + event taxonomy + weights) mirroring §4.6 decay; cold-start default = start **constrained**; route "constrained" through #26's gate.
 **Context.** Low-trust agents should be constrained, not silently shipping bad output.
 **Tasks.**
 - [ ] Compute trust = rolling success/rejection/error rate weighted by human feedback.
@@ -480,6 +503,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #30 — Consolidation cron + contradiction classifier 🧠 `memory` `eval`
 **M6** · **deps:** #12, #16 · **Spec:** Brief §4.5, PRD §6.8
+**⚠ Audit fix (Tier 1):** Per-tenant **advisory lock** (no overlapping runs); the contradiction classifier ships with its **own** labelled fixture set (precision target on supersede).
 **Context.** Distil episodic → semantic without over-generalising, duplicating, or mistaking contradictions for duplicates.
 **Tasks.**
 - [ ] Watermark (advance on success only); same-namespace similarity dedup; auto-merge ≥0.97, review 0.92–0.97.
@@ -493,6 +517,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #31 — Type-aware decay cron 🔒 `memory`
 **M6** · **deps:** #12, #30 · **Spec:** Brief §4.6
+**⚠ Audit fix (Tier 1):** "Active semantic child" queried via `memory_links` (typed), not a `source_refs` string; feedback/retrieval-stat capture is a **dependency** (write `retrieval_count`/`last_retrieved_at` on retrieve; thumbs → `feedback`).
 **Context.** Uniform decay would silently delete high-value rarely-retrieved knowledge — a correctness bug.
 **Tasks.**
 - [ ] Compute `utility_score` (recency×0.4 + frequency×0.3 + feedback×0.3) on episodic + gently semantic.
@@ -506,6 +531,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #32 — Quality Monitor + eval harness 🧠 `eval` `ops`
 **M6** · **deps:** #19, #14 · **Spec:** PRD §6.10, Brief §11.8
+**⚠ Audit fix (Tier 1):** Owns the **fixture corpus**: schema + validator + per-tenant starter + "permanent obligation" rule (like #36).
 **Context.** Silent-failure detection as a product surface; the fixtures are the arbiter of change.
 **Tasks.**
 - [ ] Dashboard metrics: abstention/miss/low-rated trends, utility distribution, retrieval quality, false-drop rate, coverage gap.
@@ -518,6 +544,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #45 — Watching the watchers (monitoring integrity) 🔒🧠 `eval` `ops`
 **M6** · **deps:** #32 · **Spec:** Brief §11.8, §3.1
+**⚠ Audit fix (Tier 2):** Watchdog runs **externally** (control-plane), not an in-tenant job; `monitors` table carries per-monitor cadence; pin the canary metric + threshold + probe set.
 **Context.** The detectors must not fail silently either. This shrinks the residual silent-failure surface to coverage gaps + novel modes.
 **Tasks.**
 - [ ] Dead-man's switch: each monitor/cron heartbeats; a watchdog (`checkOverdueMonitors`) alerts on overdue signal.
@@ -531,6 +558,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #33 — Self-improvement loop ⚙️ `core` `eval`
 **M6** · **deps:** #32, #8 · **Spec:** Brief §7.6, PRD §6.10
+**⚠ Audit fix (Tier 2):** Typed `Suggestion`/`Evidence` schema (fixture-score before/after via #32); map the 6 Rs to concrete generators.
 **Context.** The engine proposes, an admin approves, the audit records, the monitor watches — one coherent loop.
 **Tasks.**
 - [ ] Generate evidence-backed suggestions (memory 6-Rs, prompts from rejection patterns, cost downgrades).
@@ -547,6 +575,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #34 — Workflow runner (bounded DSL) ⚙️ `core` `agents`
 **M7** · **deps:** #26 · **Spec:** Brief §7.4, PRD §4.5
+**⚠ Audit fix (Tier 2):** Bounded resolver: variable scope (`trigger.*`, `<step>.output`), whitelisted condition grammar (comparisons only, no `eval`); webhook/system-event principal binding lives in #47.
 **Context.** Workflows are data, not code. The DSL orchestrates; agents compute.
 **Tasks.**
 - [ ] Interpret JSON workflows: sequential steps, conditions, parallel fan-out, human-approval step, retry policy.
@@ -559,6 +588,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #35 — Hook registry + plugin loader 🔒 `core`
 **M7** · **deps:** #26, #34, #44 · **Spec:** Brief §8.2
+**⚠ Audit fix (Tier 1):** In-process isolation: try/catch plugin load/register → boot **core-only + alert** on failure; forbidden-surface enforcement = static import-graph check extending #46.
 **Context.** The plugin boundary — extend without forking; never touch the sealed internals.
 **Tasks.**
 - [ ] `loadPluginForTenant(tenantId)` dynamic-imports `plugins/<tenantId>` at boot.
@@ -575,6 +605,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #36 — RBAC adversarial leak fixtures 🔒🧠 `rbac` `eval`
 **M8 (run from M1)** · **deps:** #9, #13 · **Spec:** Brief §9, tech-stack §5.5
+**⚠ Audit fix (Tier 2):** Build the leak **harness** first: seeded fixture tenant + per-user ground-truth visibility matrix; assertion = `result ⊆ visible`; define ranking/timing leaks as "same query, two clearances, restricted ⊂ full".
 **Context.** A leak found late is reputation-ending. Build the leak suite the moment retrieval exists and keep growing it.
 **Tasks.**
 - [ ] Fixtures: restricted user, cross-namespace bleed, chunk leakage, sensitivity ceiling, ranking/timing leaks.
@@ -586,6 +617,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #37 — Fastify API + Supabase Auth → principal ⚙️ `core` `frontend`
 **M8** · **deps:** #22, #13, #26 · **Spec:** tech-stack §2, Brief §8.1a
+**⚠ Audit fix (Tier 1):** `auth.users.id → user_clearance` mapping; **missing row ⇒ deny**; service-principal minting for non-JWT triggers (shared with #47).
 **Context.** The HTTP surface; authentication via Supabase, authorization in the engine.
 **Tasks.**
 - [ ] Verify Supabase JWT → resolve a principal on every request.
@@ -610,6 +642,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #39 — Idempotent provisioning state machine ⚙️ `ops` `infra`
 **M8** · **deps:** #6, #7 · **Spec:** Brief §8.1a, tech-stack §5.4
+**⚠ Audit fix (Tier 2):** Non-idempotent create reconciliation: deterministic project name + list-before-create on resume (no orphaned paid project).
 **Context.** Standing up a client in one command without orphaned paid projects.
 **Tasks.**
 - [ ] `provision-client`: pending→db_created→migrated→deployed→seeded, each step checkpointed + resumable.
@@ -633,6 +666,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #41 — Secrets in client Supabase Vault + rotation 🔒 `ops` `infra`
 **M8** · **deps:** #20, #39 · **Spec:** tech-stack §5.4
+**⚠ Audit fix (Tier 3):** Name env-vs-Vault secret classes (env-key rotation = a redeploy; only Vault rotates hot); single-flight refresh-token rotation.
 **Context.** 25 clients × {Supabase keys, BYO LLM keys, SoR OAuth tokens with refresh}. Secrets are a layer-1 concern.
 **Tasks.**
 - [ ] Store per-client SoR creds + per-user OAuth tokens in the client's own Supabase Vault (encrypted).
@@ -656,6 +690,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #43 — Cold-start onboarding flow 🧠 `ingestion` `frontend`
 **M8** · **deps:** #16, #17, #28 · **Spec:** Brief §10.3, PRD §4.8
+**⚠ Audit fix (Tier 2):** Split into mechanical seeding+backfill vs the **guided-interview engine** (own design); name the #39/#43 seeding-ownership boundary.
 **Context.** A zero-memory brain abstains on everything; cold-start makes it useful day one.
 **Tasks.**
 - [ ] Entity seeding from connectors (live answers immediately).
