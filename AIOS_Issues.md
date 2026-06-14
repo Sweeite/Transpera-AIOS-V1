@@ -70,6 +70,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #1 — Spike & pin the embedding model 🧠 `harness` `eval`
 **M0** · **deps:** none · **Spec:** Brief §4.7, tech-stack §5.5
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 2):** Calibrate the *v1 dense-cosine* floor explicitly; re-derive `retrieval_min_relevance` when #14 lands (different scale — a recalibration, not a reuse).
 **Context.** Changing the embedding model later means re-embedding every client's corpus and re-calibrating the floor — the single most expensive decision to reverse. Get it right before anything sits on top.
 **Tasks.**
@@ -85,6 +86,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #2 — Minimal `memories` + `chunks` tables with pgvector ⚙️ `infra` `memory`
 **M0** · **deps:** #1 · **Spec:** Brief §4.2, §4.7
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **⚠ Audit fix (Tier 3):** `vector(N)` is fixed by #1's model; a dimension change is a full re-embed (not expand/contract). Block on #1.
 **Context.** A thin slice of the full schema (#7) — just enough to store and search vectors for the demo.
 **Tasks.**
@@ -98,6 +100,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #3 — `embed()` + `writeMemory()` happy path ⚙️ `harness` `memory`
 **M0** · **deps:** #1, #2 · **Spec:** Brief §4, §5 (after-write)
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **Context.** The write half of the slice: text in → embedded, hashed, stored memory with provenance.
 **Tasks.**
 - [ ] Implement `gateway.embed()` against the pinned model (batch-capable).
@@ -111,6 +114,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #4 — `retrieve()` + abstention (no permissions yet) 🧠 `harness`
 **M0** · **deps:** #3 · **Spec:** Brief §4.7, §6
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 2):** Abstention score = **top-1 pre-fusion dense cosine** in v1, never the RRF sum; mark the seam #14 swaps.
 **Context.** The read half: find relevant memory or abstain. Permission filtering arrives in #13 — keep the seam.
 **Tasks.**
@@ -124,6 +128,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #5 — `labelAnswer()` per-claim provenance (minimal) — THE DEMO 🧠 `harness`
 **M0** · **deps:** #4 · **Spec:** Brief §6, PRD §6.5
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 3):** Add a structural citation guard: reject/relabel any claim whose `sourceId ∉ retrieved set` (semantic support-check is #24).
 **Context.** Render an honest answer: cite the retrieved memory per claim; mark uncited text as inference; show the abstention copy when nothing clears the floor.
 **Tasks.**
@@ -141,6 +146,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #6 — Provider abstraction (Supabase Mgmt + Railway APIs) ⚙️ `infra` `ops`
 **M1** · **deps:** none · **Spec:** tech-stack §5.2 (#1), §8.1a
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **Context.** The provisioning keystone rests on two young-vendor secondary APIs. Wrapping them de-risks vendor changes and serves the "portable later" promise.
 **Tasks.**
 - [ ] Define `InfraProvider` interface: `createProject(region)`, `runMigration(project)`, `deployService(project, image)`, `teardown(project)`.
@@ -154,6 +160,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #7 — Full Drizzle schema + per-tenant connection 🔒 `infra` `core`
 **M1** · **deps:** #2 · **Spec:** tech-stack §2, §5.4; Brief §4, §9
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** Add the 8 audit tables; **worker uses `DATABASE_URL_SESSION` (session-mode)** — transaction-mode pooling breaks pgmq/LISTEN/advisory-locks; define `content_hash` over normalized text **+ namespace**.
 **Context.** Everything sits on this. One Postgres per client; the engine connects to exactly one tenant.
 **Tasks.**
@@ -169,6 +176,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #8 — `system_config` service (gated/scoped/bounded/audited) ⚙️ `core`
 **M1** · **deps:** #7 · **Spec:** Brief §4.8, PRD §6.11
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **⚠ Audit fix (Tier 3):** Pending changes don't take effect; one open proposal per key; bounds live in `KNOWN_KEYS` (single source, DB stores only values).
 **Context.** The config *is* the system's correctness; a fat-fingered floor of 0.99 is a self-inflicted silent failure.
 **Tasks.**
@@ -182,6 +190,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #9 — RBAC clearance model + fail-closed filter 🔒🧠 `rbac` `core`
 **M1** · **deps:** #7 · **Spec:** Brief §9.1, PRD; tech-stack §5.5
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** Empty `allowed_zones` → `WHERE false` (the `denyAll` flag), never empty `IN`; test it; co-verify "applied in SQL" with #13.
 **Context.** The highest-stakes correctness property in the system (principle #2). Define the data model concretely, not "filter somehow."
 **Tasks.**
@@ -195,6 +204,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #10 — LLM gateway: routing, fallback, structured output, caching, cost 🧠 `harness` `core`
 **M1** · **deps:** #1 · **Spec:** PRD §6.1, tech-stack §5.3
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 3):** Repair loop bounded (1 attempt → escalate to fallback model → fail); prompt-cache is a per-provider adapter concern, not one flag.
 **Context.** The single chokepoint every model call passes through. Core, never plugins.
 **Tasks.**
@@ -209,6 +219,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #11 — Tracing + audit (two stores) 🔒 `core` `ops`
 **M1** · **deps:** #7 · **Spec:** PRD §6.9, Brief §11.10
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 3):** Tamper-evidence = hash chain (`prev_hash`) + `verifyChain()`, or explicitly descope and soften the acceptance.
 **Context.** Debuggability vs privacy: traces may hold content but ephemerally; the audit log never holds content.
 **Tasks.**
@@ -221,6 +232,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #46 — Architecture test: enforce the gateway chokepoint 🔒 `eval` `core`
 **M1** · **deps:** #10 · **Spec:** Brief §11.8 (watching the watchers)
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 3):** Add embedding-provider SDKs to the forbidden list; catch `import()`/`require()`, not just static `import`; note hostname-level enforcement as a known gap.
 **Context.** Cost/trace completeness depends on "nothing calls a model directly." A rogue `import Anthropic` somewhere = untracked cost + untraced calls — a silent failure of the observability layer itself.
 **Tasks.**
@@ -237,6 +249,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #12 — Invalidate-don't-overwrite + history 🔒 `memory`
 **M2** · **deps:** #7 · **Spec:** Brief §4.4
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **Context.** When a fact changes, never overwrite — preserve history so "what did we believe in March, and when did it change" is queryable.
 **Tasks.**
 - [ ] `invalidate(id, reason)` sets `valid_to = now()`, `status = 'invalidated'`, writes the new record, links via `source_refs`.
@@ -249,6 +262,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #13 — Selectivity-aware filtered ANN + RRF 🔒🧠 `harness` `memory`
 **M2** · **deps:** #9, #10 · **Spec:** Brief §4.7, §9.1
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** Use `rrf_k` + `exact_search_max_rows`; name the selectivity-estimation method; write the **v1 pre-reranker** floor path into `retrieval.ts` (not just §6.4 prose).
 **Context.** "Fail-closed at the vector layer" is one of the hard problems in vector search; pgvector HNSW + a selective filter silently collapses recall. Solve it explicitly.
 **Tasks.**
@@ -263,6 +277,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #14 — Reranker floor 🧠 `harness` `eval`
 **M2** · **deps:** #13 · **Spec:** Brief §4.7
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 2):** Name the calibration procedure (held-out labelled set + target metric); pin `reranker_model`+`version` the floor binds to.
 **Context.** RRF discards score magnitude, so the abstention decision must be made on a calibrated score.
 **Tasks.**
@@ -276,6 +291,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #15 — Context assembly + token budgeting ⚙️ `harness`
 **M2** · **deps:** #13 · **Spec:** PRD §6.2
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **Context.** Build the prompt for a turn without blowing the window or leaking.
 **Tasks.**
 - [ ] Pull retrieved memories (already permission-filtered) + persona + tool defs + recent thread.
@@ -292,6 +308,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #44 — Connector adapter interface + registry 🧠 `ingestion` `core`
 **M3** · **deps:** #7 · **Spec:** Brief §10, tech-stack §2
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **Context.** Make "add any integration" first-class: one `Connector` interface + a registry, so the 5th/20th connector is uniform, not bespoke.
 **Tasks.**
 - [ ] Finalize `connectors/adapter.ts`: `sync` / `fetchLive` / `schema` / `authFor(principal)` / `healthCheck` + `ConnectorMeta`.
@@ -304,6 +321,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #16 — Identity Map (entity resolution) 🧠 `ingestion` `memory`
 **M3** · **deps:** #7 · **Spec:** Brief §4.10, PRD §6.12
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** `resolveEntity({mention, namespaceHint}) → {entity, confidence}|null`; use `entity_resolution_min_confidence`; seed-time cross-SoR merge uses the **same** similarity+floor primitive.
 **Context.** Resolves a mention → canonical entity + per-SoR ids; needed on both write (namespacing) and read (federation). Canonical ids internal, SoR ids mirrored.
 **Tasks.**
@@ -317,6 +335,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #17 — Routing gates 1–4 🔒🧠 `ingestion` `core`
 **M3** · **deps:** #16, #10, #44 · **Spec:** Brief §5, PRD §6.3
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** Stamp `connection.trust_level → Provenance.trustLevel` in the after-write block; Gate-3 pre-classifier is its own sub-task (labelled set, `gate3_preclassifier_threshold`, false-negative audit via #19).
 **Context.** The operational heart of ingestion — the spine rule made executable. Cheap-to-expensive gate ordering keeps cost sane.
 **Tasks.**
@@ -332,6 +351,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #18 — Anti-poisoning trust gate 🔒 `ingestion` `harness`
 **M3** · **deps:** #17 · **Spec:** Brief §5, PRD §6.7
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** `corroborate()` is **computed** (shared with consolidation dedup, `corroboration_similarity_threshold`), not a boolean input; name the injection-scan approach (LLM classifier + denylist v1).
 **Context.** Ingested content becomes memory later retrieved as trusted "I know this." Without a trust gate, provenance launders injected content.
 **Tasks.**
@@ -344,6 +364,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #20 — Connectors v1 (one structured + one unstructured) ⚙️ `ingestion`
 **M3** · **deps:** #44, #17 · **Spec:** Brief §10
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **⚠ Audit fix (Tier 2):** Define the `fetchLive` field-name normalization contract shared by `schema()`, `fetchLive()`, and `connector_schemas`.
 **Context.** Prove the adapter interface with two real connectors of different kinds.
 **Tasks.**
@@ -357,6 +378,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #19 — Ingestion-decision log + sampled audit 🧠 `ingestion` `eval`
 **M3** · **deps:** #17 · **Spec:** Brief §5, §11.3, §11.8
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 2):** Miss↔ingestion cross-check: embed the miss → ANN over `chunks` + re-fetch flagged decision-log refs.
 **Context.** You can't measure what you never ingested — this is the bridge that makes wrong-drops visible.
 **Tasks.**
@@ -370,6 +392,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #21 — connector_schemas drift job ⚙️ `ingestion` `ops`
 **M3** · **deps:** #20 · **Spec:** Brief §5
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **Context.** SoR schemas drift; a stale registry silently routes new structured fields into memory (a spine violation).
 **Tasks.**
 - [ ] Periodic job: introspect each structured connector's live schema, diff vs `connector_schemas`.
@@ -385,6 +408,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #22 — Intent router (query vs command) 🧠 `core`
 **M4** · **deps:** #10 · **Spec:** Brief §7.1, PRD §4.1
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** Symmetric confidence on both arms; `intent_min_confidence` → clarify-back; needs `recentThread` (#48); intent fixtures (#32); destructive stop delegated to #26.
 **Context.** One box; the user never decides "asking vs commanding."
 **Tasks.**
@@ -398,6 +422,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #23 — Federation-on-read (hybrid live + memory) 🧠 `harness` `agents`
 **M4** · **deps:** #16, #20, #13 · **Spec:** Brief §4.10, PRD §6.12
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **Context.** The flagship "what do we know about Client X" — resolve entity, fetch live, blend with memory, label provenance, all within a latency budget. **The hardest piece in the system** (entity resolution + live orchestration), so the design decisions are named below, not left to discover mid-build. Home file: `harness/federation.ts` (`answerWithFederation`).
 **Tasks.**
 - [ ] Resolve entity → look up external ids → fan out `fetchLive()` to holding connectors in parallel.
@@ -418,6 +443,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #24 — Conditional provenance verification 🧠 `harness` `eval`
 **M4** · **deps:** #5, #14 · **Spec:** PRD §6.5, tech-stack §5.3
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 3):** Add `Claim.confidence`; verify-trigger = `sensitivity ≥ verify_sensitivity_threshold OR forAction OR confidence < t`.
 **Context.** Confirm cited claims are actually supported — but only when it's worth the cost.
 **Tasks.**
@@ -434,6 +460,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #25 — Durable `task_state` (pause/resume) 🧠 `agents` `core`
 **M5** · **deps:** #7 · **Spec:** Brief §4.1
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **Context.** A multi-step task that pauses (stuck sub-agent) needs state that survives a worker restart — working memory never persists.
 **Tasks.**
 - [ ] `task_state` (status, principal, trigger, accumulated context, open question).
@@ -445,6 +472,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #26 — Single-agent runner + tool loop + action authz 🔒🧠 `agents` `harness`
 **M5** · **deps:** #10, #9, #25 · **Spec:** Brief §7.2, §9.2, PRD §6.6
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** Confirmation reuses the interrupt primitive (`paused_awaiting_confirmation` + preview payload); add the `standing_approvals` store.
 **Context.** Agents act — the bigger blast radius than a leaked read. This also defines the **agent registry + capability manifest** that routing (#27) depends on.
 **Tasks.**
@@ -459,6 +487,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #27 — Orchestrator + delegation tree + clarification interrupt 🧠 `agents`
 **M5** · **deps:** #26 · **Spec:** Brief §7.3
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** Idempotent resume (`version`/`lease_until`, resume-via-queue, answer-already-applied guard); add a routing-accuracy fixture suite (goal → expected agent).
 **Context.** Multi-agent must be visible and real. Stuck sub-agents ask, not guess. **Routing quality depends entirely on the agent manifests (#26)** — this is the one agent-layer detail to nail.
 **Tasks.**
@@ -474,6 +503,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #28 — Inbox (the single push destination) 🧠 `agents` `frontend`
 **M5** · **deps:** #25, #9 · **Spec:** Brief §7.5
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** Resume keeps the **original** `task_state.principal`; answerer-authz check; treat the injected answer as low-trust (can unblock, not escalate).
 **Context.** Everything the system pushes to a person lands here — briefs, clarification requests, alerts, suggestions.
 **Tasks.**
@@ -487,6 +517,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #29 — Trust scores ⚙️ `agents`
 **M5** · **deps:** #26 · **Spec:** Brief §7.2
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **⚠ Audit fix (Tier 2):** Trust formula (window + event taxonomy + weights) mirroring §4.6 decay; cold-start default = start **constrained**; route "constrained" through #26's gate.
 **Context.** Low-trust agents should be constrained, not silently shipping bad output.
 **Tasks.**
@@ -503,6 +534,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #30 — Consolidation cron + contradiction classifier 🧠 `memory` `eval`
 **M6** · **deps:** #12, #16 · **Spec:** Brief §4.5, PRD §6.8
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** Per-tenant **advisory lock** (no overlapping runs); the contradiction classifier ships with its **own** labelled fixture set (precision target on supersede).
 **Context.** Distil episodic → semantic without over-generalising, duplicating, or mistaking contradictions for duplicates.
 **Tasks.**
@@ -517,6 +549,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #31 — Type-aware decay cron 🔒 `memory`
 **M6** · **deps:** #12, #30 · **Spec:** Brief §4.6
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** "Active semantic child" queried via `memory_links` (typed), not a `source_refs` string; feedback/retrieval-stat capture is a **dependency** (write `retrieval_count`/`last_retrieved_at` on retrieve; thumbs → `feedback`).
 **Context.** Uniform decay would silently delete high-value rarely-retrieved knowledge — a correctness bug.
 **Tasks.**
@@ -531,6 +564,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #32 — Quality Monitor + eval harness 🧠 `eval` `ops`
 **M6** · **deps:** #19, #14 · **Spec:** PRD §6.10, Brief §11.8
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** Owns the **fixture corpus**: schema + validator + per-tenant starter + "permanent obligation" rule (like #36).
 **Context.** Silent-failure detection as a product surface; the fixtures are the arbiter of change.
 **Tasks.**
@@ -544,6 +578,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #45 — Watching the watchers (monitoring integrity) 🔒🧠 `eval` `ops`
 **M6** · **deps:** #32 · **Spec:** Brief §11.8, §3.1
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 2):** Watchdog runs **externally** (control-plane), not an in-tenant job; `monitors` table carries per-monitor cadence; pin the canary metric + threshold + probe set.
 **Context.** The detectors must not fail silently either. This shrinks the residual silent-failure surface to coverage gaps + novel modes.
 **Tasks.**
@@ -558,6 +593,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #33 — Self-improvement loop ⚙️ `core` `eval`
 **M6** · **deps:** #32, #8 · **Spec:** Brief §7.6, PRD §6.10
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **⚠ Audit fix (Tier 2):** Typed `Suggestion`/`Evidence` schema (fixture-score before/after via #32); map the 6 Rs to concrete generators.
 **Context.** The engine proposes, an admin approves, the audit records, the monitor watches — one coherent loop.
 **Tasks.**
@@ -575,6 +611,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #34 — Workflow runner (bounded DSL) ⚙️ `core` `agents`
 **M7** · **deps:** #26 · **Spec:** Brief §7.4, PRD §4.5
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **⚠ Audit fix (Tier 2):** Bounded resolver: variable scope (`trigger.*`, `<step>.output`), whitelisted condition grammar (comparisons only, no `eval`); webhook/system-event principal binding lives in #47.
 **Context.** Workflows are data, not code. The DSL orchestrates; agents compute.
 **Tasks.**
@@ -588,6 +625,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #35 — Hook registry + plugin loader 🔒 `core`
 **M7** · **deps:** #26, #34, #44 · **Spec:** Brief §8.2
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** In-process isolation: try/catch plugin load/register → boot **core-only + alert** on failure; forbidden-surface enforcement = static import-graph check extending #46.
 **Context.** The plugin boundary — extend without forking; never touch the sealed internals.
 **Tasks.**
@@ -605,6 +643,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #36 — RBAC adversarial leak fixtures 🔒🧠 `rbac` `eval`
 **M8 (run from M1)** · **deps:** #9, #13 · **Spec:** Brief §9, tech-stack §5.5
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 2):** Build the leak **harness** first: seeded fixture tenant + per-user ground-truth visibility matrix; assertion = `result ⊆ visible`; define ranking/timing leaks as "same query, two clearances, restricted ⊂ full".
 **Context.** A leak found late is reputation-ending. Build the leak suite the moment retrieval exists and keep growing it.
 **Tasks.**
@@ -617,6 +656,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #37 — Fastify API + Supabase Auth → principal ⚙️ `core` `frontend`
 **M8** · **deps:** #22, #13, #26 · **Spec:** tech-stack §2, Brief §8.1a
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **⚠ Audit fix (Tier 1):** `auth.users.id → user_clearance` mapping; **missing row ⇒ deny**; service-principal minting for non-JWT triggers (shared with #47).
 **Context.** The HTTP surface; authentication via Supabase, authorization in the engine.
 **Tasks.**
@@ -629,6 +669,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #38 — Brain frontend (tracer-bullet UI → full) ⚙️ `frontend`
 **M8** · **deps:** #37 · **Spec:** Brief §13, tech-stack §1
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **Context.** The staff-facing product. Stack is **locked**: Vite + React + TS SPA · Tailwind v4 · shadcn/ui + prompt-kit · TanStack Query/Table · Recharts · Supabase JS. Scaffold already exists in `apps/brain` (ChatView + ProvenanceMessage stubs).
 **Tasks.**
 - [ ] `npx shadcn init` + add base components (button, textarea, card, badge, table, dialog, tabs); add prompt-kit chat primitives (PromptInput, Message, ChatContainer, Markdown, Reasoning, Loader).
@@ -642,6 +683,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #39 — Idempotent provisioning state machine ⚙️ `ops` `infra`
 **M8** · **deps:** #6, #7 · **Spec:** Brief §8.1a, tech-stack §5.4
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **⚠ Audit fix (Tier 2):** Non-idempotent create reconciliation: deterministic project name + list-before-create on resume (no orphaned paid project).
 **Context.** Standing up a client in one command without orphaned paid projects.
 **Tasks.**
@@ -655,6 +697,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #40 — migrate-all + deploy-all (expand/contract safety) 🔒 `ops` `infra`
 **M8** · **deps:** #39 · **Spec:** tech-stack §5.4
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **Context.** Fleet migrations without version skew breaking clients.
 **Tasks.**
 - [ ] `migrate-all`: run forward-only migration per project, report per-project status.
@@ -666,6 +709,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #41 — Secrets in client Supabase Vault + rotation 🔒 `ops` `infra`
 **M8** · **deps:** #20, #39 · **Spec:** tech-stack §5.4
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 3):** Name env-vs-Vault secret classes (env-key rotation = a redeploy; only Vault rotates hot); single-flight refresh-token rotation.
 **Context.** 25 clients × {Supabase keys, BYO LLM keys, SoR OAuth tokens with refresh}. Secrets are a layer-1 concern.
 **Tasks.**
@@ -679,6 +723,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #42 — Fleet alerting (day one) ⚙️ `ops`
 **M8 (early)** · **deps:** #37 · **Spec:** tech-stack §5.4
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **Context.** Console UI is deferred; flying blind is not.
 **Tasks.**
 - [ ] Each engine + worker posts heartbeat + error rate to Sentry/uptime (health-without-data).
@@ -690,6 +735,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #43 — Cold-start onboarding flow 🧠 `ingestion` `frontend`
 **M8** · **deps:** #16, #17, #28 · **Spec:** Brief §10.3, PRD §4.8
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 2):** Split into mechanical seeding+backfill vs the **guided-interview engine** (own design); name the #39/#43 seeding-ownership boundary.
 **Context.** A zero-memory brain abstains on everything; cold-start makes it useful day one.
 **Tasks.**
@@ -716,6 +762,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #47 — Tenant + admin onboarding & auth bootstrap 🔒🧠 `infra` `rbac` `core`
 **M1 (with #9/#39)** · **deps:** #9, #39 · **Spec:** Brief §8.1a, §9.1, §10.3
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **Context.** Every issue assumes a resolved **principal** and a **clearance row** — and nothing creates the first one. Fail-closed RBAC means a freshly provisioned brain has *nobody who can see anything or grant access* (chicken-and-egg). This is the auth-axis equivalent of the federation gap.
 **Tasks.**
 - [ ] Map Supabase `auth.users.id` (JWT `sub`) → engine principal; `user_clearance.principal_id` join. Missing row ⇒ **deny** (distinct from empty-zones).
@@ -729,6 +776,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #48 — Conversation / thread state 🧠 `core` `frontend`
 **M4 (before #22)** · **deps:** #7 · **Spec:** Brief §7.1, §4.1
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **Context.** `assembleContext` takes `recentThread` with no source; the intent router can't resolve "do it → do *what*?" without prior turns. Conversation state was specified nowhere — it is **not** working memory (which never persists).
 **Tasks.**
 - [ ] `threads` + `messages` tables/types; thread owned by a user, RBAC-shareable (§7.1).
@@ -741,6 +789,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #49 — Meeting-bot connector 🧠 `ingestion`
 **M3+ (after #44/#20/#23)** · **deps:** #44, #16, #20 · **Spec:** Brief §10.2
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **Context.** Promoted from a cross-cutting note because it hides a **second resolver**: speaker attribution is not #16's text-mention resolver.
 **Tasks.**
 - [ ] Unstructured, episodic-first connector implementing the `Connector` interface; conservative default sensitivity.
@@ -754,6 +803,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #50 — Observability dashboards + metrics rollup 🧠 `frontend` `ops`
 **M8** · **deps:** #32, #37 · **Spec:** Brief §11
+**Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **Context.** "Each dashboard is just a read" is false for the important ones: trend lines need a **time-series rollup** store no issue created, and some actions ("broaden visibility") are *writes*. Twelve surfaces were smuggled into one bullet of #38.
 **Tasks.**
 - [ ] `metrics_rollup` store + a rollup job (abstention/miss/cost/utility over time) for Quality (#32) + Cost monitors.
@@ -766,6 +816,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #51 — CI pipeline + test infrastructure ⚙️ `eval` `ops`
 **M1 (early)** · **deps:** #7 · **Spec:** tech-stack §4, §5.5
+**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **Context.** #32/#36/#46 all "wire into CI as a required gate" — but no issue creates the gate. Per-tenant fixtures need an ephemeral DB to run against.
 **Tasks.**
 - [ ] CI pipeline: typecheck, unit tests, the architecture test (#46), the leak fixtures (#36), the eval harness (#32) on every PR.
