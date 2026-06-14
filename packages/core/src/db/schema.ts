@@ -303,6 +303,24 @@ export const auditLog = pgTable('audit_log', {
   createdAt: tstz('created_at').notNull().defaultNow(),
 });
 
+// ── config_proposals ── 0011. The gated approval queue for quality-affecting config changes (#8). ─────────
+// Applied values live in `system_config`; a PENDING qualityAffecting change parks here until approved, so
+// `getConfig` (reads system_config only) cannot see it. One open proposal per (key, namespace) — see the
+// partial unique index in the migration. Bounds/quality live in KNOWN_KEYS (code), never in a row.
+export const configProposals = pgTable('config_proposals', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  key: text('key').notNull(),
+  namespace: text('namespace'), // null ⇒ org-scope proposal; set ⇒ client/project override
+  currentValue: jsonb('current_value').$type<number | string>(),
+  proposedValue: jsonb('proposed_value').$type<number | string>().notNull(),
+  evidence: text('evidence').notNull(),
+  status: text('status').$type<'pending' | 'approved' | 'rejected' | 'superseded'>().notNull(),
+  createdAt: tstz('created_at').notNull().defaultNow(),
+  createdBy: text('created_by'),
+  resolvedAt: tstz('resolved_at'),
+  resolvedBy: text('resolved_by'),
+});
+
 /** Every table, for the drift test + the typed drizzle instance. Add new tables here as migrations land. */
 export const schema = {
   memories,
@@ -328,6 +346,7 @@ export const schema = {
   metricsRollup,
   traces,
   auditLog,
+  configProposals,
 } as const;
 
 // Inferred row types flow into #8–#11 (select shapes; insert shapes via `$inferInsert`).
