@@ -45,8 +45,8 @@ Orientation for every session. AIOS is a **durable, queryable, permission-safe o
 ## Layout
 `packages/core` (THE SEALED ENGINE — harness, routing, memory, identity, agents, workflows, rbac, config, connectors, hooks) · `plugin-sdk` · `api` (Fastify) · `worker` (pgmq) · `shared` (types, defined once). `apps/brain` (Vite + React + Tailwind + shadcn/ui + prompt-kit) · `apps/console` (DEFERRED). `control-plane` (provision/migrate/deploy scripts) · `plugins/` (by tenant id) · `tests/{core,tenant-fixtures}`.
 
-## Models (route by the issue's label)
-🔒/🧠 issues → **Opus 4.8** (`/fast`). ⚙️ plumbing → **Sonnet 4.6** (`/model sonnet`). All reviews / QA / grills / hard bugs → **Opus**. Filter: `gh issue list --label model:opus` | `model:sonnet`.
+## Models
+**Opus 4.8, high effort (`/fast`), for the whole build.** The work is mostly security-critical/subtle, and on Max the cost is quota, not dollars. ⚙️ plumbing issues are the **conserve-to-Sonnet lever** *only if* you're rationing Max limits — otherwise stay on Opus. All reviews / QA / grills / hard bugs → Opus, always. (Criticality is still in each issue header: 🔒 fail-closed · 🧠 differentiator · ⚙️ plumbing.)
 
 ## Build order
 M0 tracer slice (#1→#5) → M1 foundations → M2 memory → M3 ingestion+identity → M4 chat → M5 agents → M6 lifecycle → M7 workflows → M8 surfaces+ops. **Front-load the leak fixtures (#36) + CI (#51)** alongside M0.

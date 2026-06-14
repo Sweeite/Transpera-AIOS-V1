@@ -87,7 +87,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #2 — Minimal `memories` + `chunks` tables with pgvector ⚙️ `infra` `memory`
 **M0** · **deps:** #1 · **Spec:** Brief §4.2, §4.7
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **⚠ Audit fix (Tier 3):** `vector(N)` is fixed by #1's model; a dimension change is a full re-embed (not expand/contract). Block on #1.
 **Context.** A thin slice of the full schema (#7) — just enough to store and search vectors for the demo.
 **Tasks.**
@@ -101,7 +101,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #3 — `embed()` + `writeMemory()` happy path ⚙️ `harness` `memory`
 **M0** · **deps:** #1, #2 · **Spec:** Brief §4, §5 (after-write)
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **Context.** The write half of the slice: text in → embedded, hashed, stored memory with provenance.
 **Tasks.**
 - [ ] Implement `gateway.embed()` against the pinned model (batch-capable).
@@ -147,7 +147,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #6 — Provider abstraction (Supabase Mgmt + Railway APIs) ⚙️ `infra` `ops`
 **M1** · **deps:** none · **Spec:** tech-stack §5.2 (#1), §8.1a
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **Context.** The provisioning keystone rests on two young-vendor secondary APIs. Wrapping them de-risks vendor changes and serves the "portable later" promise.
 **Tasks.**
 - [ ] Define `InfraProvider` interface: `createProject(region)`, `runMigration(project)`, `deployService(project, image)`, `teardown(project)`.
@@ -187,7 +187,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #8 — `system_config` service (gated/scoped/bounded/audited) ⚙️ `core`
 **M1** · **deps:** #7 · **Spec:** Brief §4.8, PRD §6.11
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **⚠ Audit fix (Tier 3):** Pending changes don't take effect; one open proposal per key; bounds live in `KNOWN_KEYS` (single source, DB stores only values).
 **Context.** The config *is* the system's correctness; a fat-fingered floor of 0.99 is a self-inflicted silent failure.
 **Tasks.**
@@ -302,7 +302,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #15 — Context assembly + token budgeting ⚙️ `harness`
 **M2** · **deps:** #13 · **Spec:** PRD §6.2
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **Context.** Build the prompt for a turn without blowing the window or leaking.
 **Tasks.**
 - [ ] Pull retrieved memories (already permission-filtered) + persona + tool defs + recent thread.
@@ -375,7 +375,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #20 — Connectors v1 (one structured + one unstructured) ⚙️ `ingestion`
 **M3** · **deps:** #44, #17 · **Spec:** Brief §10
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **⚠ Audit fix (Tier 2):** Define the `fetchLive` field-name normalization contract shared by `schema()`, `fetchLive()`, and `connector_schemas`.
 **Context.** Prove the adapter interface with two real connectors of different kinds.
 **Tasks.**
@@ -403,7 +403,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #21 — connector_schemas drift job ⚙️ `ingestion` `ops`
 **M3** · **deps:** #20 · **Spec:** Brief §5
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **Context.** SoR schemas drift; a stale registry silently routes new structured fields into memory (a spine violation).
 **Tasks.**
 - [ ] Periodic job: introspect each structured connector's live schema, diff vs `connector_schemas`.
@@ -528,7 +528,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #29 — Trust scores ⚙️ `agents`
 **M5** · **deps:** #26 · **Spec:** Brief §7.2
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **⚠ Audit fix (Tier 2):** Trust formula (window + event taxonomy + weights) mirroring §4.6 decay; cold-start default = start **constrained**; route "constrained" through #26's gate.
 **Context.** Low-trust agents should be constrained, not silently shipping bad output.
 **Tasks.**
@@ -604,7 +604,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #33 — Self-improvement loop ⚙️ `core` `eval`
 **M6** · **deps:** #32, #8 · **Spec:** Brief §7.6, PRD §6.10
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **⚠ Audit fix (Tier 2):** Typed `Suggestion`/`Evidence` schema (fixture-score before/after via #32); map the 6 Rs to concrete generators.
 **Context.** The engine proposes, an admin approves, the audit records, the monitor watches — one coherent loop.
 **Tasks.**
@@ -622,7 +622,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #34 — Workflow runner (bounded DSL) ⚙️ `core` `agents`
 **M7** · **deps:** #26 · **Spec:** Brief §7.4, PRD §4.5
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **⚠ Audit fix (Tier 2):** Bounded resolver: variable scope (`trigger.*`, `<step>.output`), whitelisted condition grammar (comparisons only, no `eval`); webhook/system-event principal binding lives in #47.
 **Context.** Workflows are data, not code. The DSL orchestrates; agents compute.
 **Tasks.**
@@ -667,7 +667,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #37 — Fastify API + Supabase Auth → principal ⚙️ `core` `frontend`
 **M8** · **deps:** #22, #13, #26 · **Spec:** tech-stack §2, Brief §8.1a
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **⚠ Audit fix (Tier 1):** `auth.users.id → user_clearance` mapping; **missing row ⇒ deny**; service-principal minting for non-JWT triggers (shared with #47).
 **Context.** The HTTP surface; authentication via Supabase, authorization in the engine.
 **Tasks.**
@@ -680,7 +680,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #38 — Brain frontend (tracer-bullet UI → full) ⚙️ `frontend`
 **M8** · **deps:** #37 · **Spec:** Brief §13, tech-stack §1
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **Context.** The staff-facing product. Stack is **locked**: Vite + React + TS SPA · Tailwind v4 · shadcn/ui + prompt-kit · TanStack Query/Table · Recharts · Supabase JS. Scaffold already exists in `apps/brain` (ChatView + ProvenanceMessage stubs).
 **Tasks.**
 - [ ] `npx shadcn init` + add base components (button, textarea, card, badge, table, dialog, tabs); add prompt-kit chat primitives (PromptInput, Message, ChatContainer, Markdown, Reasoning, Loader).
@@ -694,7 +694,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #39 — Idempotent provisioning state machine ⚙️ `ops` `infra`
 **M8** · **deps:** #6, #7 · **Spec:** Brief §8.1a, tech-stack §5.4
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **⚠ Audit fix (Tier 2):** Non-idempotent create reconciliation: deterministic project name + list-before-create on resume (no orphaned paid project).
 **Context.** Standing up a client in one command without orphaned paid projects.
 **Tasks.**
@@ -734,7 +734,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #42 — Fleet alerting (day one) ⚙️ `ops`
 **M8 (early)** · **deps:** #37 · **Spec:** tech-stack §5.4
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **Context.** Console UI is deferred; flying blind is not.
 **Tasks.**
 - [ ] Each engine + worker posts heartbeat + error rate to Sentry/uptime (health-without-data).
@@ -829,7 +829,7 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 
 ### #51 — CI pipeline + test infrastructure ⚙️ `eval` `ops`
 **M1 (early)** · **deps:** #7 · **Spec:** tech-stack §4, §5.5
-**Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
+**Model:** 🧠 Opus 4.8 — high effort (`/fast`); building the whole project on Opus. *(⚙️ plumbing — the conserve-to-Sonnet candidate if you ever ration Max limits.)*
 **Context.** #32/#36/#46 all "wire into CI as a required gate" — but no issue creates the gate. Per-tenant fixtures need an ephemeral DB to run against.
 **Tasks.**
 - [ ] CI pipeline: typecheck, unit tests (incl. **`tests/core/`** — wire it into the default run; it isn't a workspace pkg, so `pnpm -r test` misses it today), the architecture test (#46), the leak fixtures (#36), the eval harness (#32) on every PR.
