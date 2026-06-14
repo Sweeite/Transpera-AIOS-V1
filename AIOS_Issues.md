@@ -163,14 +163,16 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 **M1** · **deps:** #2 · **Spec:** tech-stack §2, §5.4; Brief §4, §9
 **Model:** 🧠 Opus 4.8 — run `/fast` (security-critical / subtle; a silent miss here costs more than the tokens).
 **⚠ Audit fix (Tier 1):** Add the 8 audit tables; **worker uses `DATABASE_URL_SESSION` (session-mode)** — transaction-mode pooling breaks pgmq/LISTEN/advisory-locks; define `content_hash` over normalized text **+ namespace**.
+**🛠 Setup prerequisite (FIRST needed here):** the **Supabase CLI + local stack** (`supabase start`, needs Docker). M0 ran hermetically on pglite, but `getDb()` + the real `DATABASE_URL` need a real Supabase. Also run the migration against real Supabase here as a **second test lane** — pglite's bundled pgvector ≠ Supabase's, so this is where you catch pglite-vs-real divergence (the HNSW/extension-version trap noted in #2). Recommend installing it a bit earlier as that second lane. (Also required by #37 Auth, #39 provisioning.)
 **Context.** Everything sits on this. One Postgres per client; the engine connects to exactly one tenant.
 **Tasks.**
+- [ ] Set up Supabase CLI + `supabase start` (local Postgres+pgvector+Auth); confirm the migration applies cleanly on it, not just pglite.
 - [ ] Define all tables in `db/schema.ts`: memories(+slots), chunks, connector_schemas, connections(+trust_level), identity_map, ingestion_log, inbox_items, task_state, user_clearance, roles, system_config, traces, audit_log.
 - [ ] Align columns 1:1 with `@aios/shared` types.
 - [ ] `getDb()` reads `DATABASE_URL` (Supavisor-pooled); engine refuses to boot without `TENANT_ID`.
 - [ ] First migration documented as expand/contract; write the migration README.
 **Acceptance.**
-- [ ] Schema migrates clean on a fresh Supabase project; `pnpm typecheck` passes with types flowing end-to-end.
+- [ ] Schema migrates clean on a fresh Supabase project (local `supabase start` and/or cloud); `pnpm typecheck` passes with types flowing end-to-end.
 - [ ] Booting without `TENANT_ID` fails fast (fail-closed).
 **Out of scope.** RLS (we use physical isolation, not RLS); data seeding (#39/#43).
 **Watch.** Connection-pool gotchas with pgmq — verify LISTEN/advisory-lock behaviour under Supavisor transaction mode.
@@ -822,8 +824,8 @@ A five-way independent audit found ~20 thin issues, ~7 missing tables, and gaps 
 **Model:** ⚙️ Sonnet 4.6 — `/model sonnet` (well-specified plumbing; switch down to save cost).
 **Context.** #32/#36/#46 all "wire into CI as a required gate" — but no issue creates the gate. Per-tenant fixtures need an ephemeral DB to run against.
 **Tasks.**
-- [ ] CI pipeline: typecheck, unit tests, the architecture test (#46), the leak fixtures (#36), the eval harness (#32) on every PR.
-- [ ] Ephemeral Postgres+pgvector for tests; seed `tests/tenant-fixtures` against it; test migrations apply clean (expand/contract).
+- [ ] CI pipeline: typecheck, unit tests (incl. **`tests/core/`** — wire it into the default run; it isn't a workspace pkg, so `pnpm -r test` misses it today), the architecture test (#46), the leak fixtures (#36), the eval harness (#32) on every PR.
+- [ ] Two DB lanes: **pglite** (fast, hermetic, in-process — what M0 uses) AND a **real Supabase Postgres** lane (`supabase start` / cloud) that applies every migration — pglite's pgvector ≠ Supabase's, so the real lane catches divergence (HNSW/extension-version trap, #2/#7). Seed `tests/tenant-fixtures` against it; migrations apply clean (expand/contract).
 - [ ] An end-to-end **engine-boot** smoke test: assembled engine boots against a provisioned tenant (TENANT_ID + DB + plugin + clearance) — the path #39 produces, otherwise first exercised in prod.
 **Acceptance.**
 - [ ] A PR that introduces a leak, a direct model call, or a failing fixture is blocked; the engine-boot smoke test passes in CI.
