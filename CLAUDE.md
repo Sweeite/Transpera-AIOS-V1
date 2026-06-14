@@ -18,7 +18,7 @@ Orientation for every session. AIOS is a **durable, queryable, permission-safe o
 - **Eval fixtures are the arbiter** of every quality decision — never the live metric a change mechanically moves.
 - Any bug found becomes a **permanent regression test**.
 - Plan before non-trivial work; for one-way-door issues (e.g. #1, #9, #13, #23) present a plan and wait for approval.
-- **Commits & closing issues:** reference issues PLAINLY in commit messages (`Issue #N: …`, `seam for #13`, `see #13`) — **never** closing keywords (`closes/fixes/resolves #N`), which auto-close issues you only *referenced* (this silently false-closed #13 once). Close issues explicitly with `gh issue close N` **only after review approval**, and `git push` after every commit.
+- **Commits & closing issues:** reference issues PLAINLY in commit messages (`Issue #N: …`, `seam for #13`, `see #13`). **NEVER put a close-keyword immediately before `#N` — not even in explanatory prose.** The keywords are `close/closes/closed`, `fix/fixes/fixed`, `resolve/resolves/resolved`. Writing `Issue #5: …` is fine; writing `auto-closed #13` is NOT — it re-closed #13 *twice* (once in the build commit, once in the hygiene commit documenting it). When describing a close event in a commit, write `issue 13` / `thirteen`, never `closed #13`. Close issues only via `gh issue close N` after review approval, and `git push` after every commit.
 
 ## Red lines (true at every gate)
 - ❌ **No permission leak — ever.** Fail-closed: every unverified permission/namespace defaults to deny/empty.
