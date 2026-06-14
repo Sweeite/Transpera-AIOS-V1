@@ -30,10 +30,48 @@ export async function callModel<T = string>(_opts: CallOptions): Promise<CallRes
   throw new Error('TODO: callModel');
 }
 
-/** Embeddings are pinned to ONE model+version and NEVER cost-routed (§4.7). */
-export async function embed(_texts: string[]): Promise<number[][]> {
-  // TODO: call the single pinned embedding model; stamp embeddingModel/embeddingVersion on every vector.
-  throw new Error('TODO: embed');
+/**
+ * Embeddings are pinned to ONE model+version and NEVER cost-routed (§4.7). This is the FIRST real provider
+ * call in the engine and the ONLY place embeddings are produced — every vector flows through here so the
+ * pin (EMBEDDING_MODEL/DIM) is impossible to bypass (#46 chokepoint). The caller stamps EMBEDDING_VERSION.
+ *
+ * Direct REST (fetch) rather than the openai SDK: keeps the chokepoint test trivially green (no provider SDK
+ * imported anywhere) and avoids a dependency for one endpoint. Batch-capable: N inputs → N vectors, in order.
+ * Fails LOUD (never a partial/empty result silently) — a bad embed must surface, not poison the vector space.
+ */
+export async function embed(texts: string[]): Promise<number[][]> {
+  if (texts.length === 0) return []; // nothing to embed — no provider call
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY is not set — embeddings cannot run (fail loud, never a silent empty vector).');
+  }
+
+  const res = await fetch('https://api.openai.com/v1/embeddings', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    // `dimensions` is REQUIRED: text-embedding-3-large defaults to 3072; we pin to EMBEDDING_DIM (1024).
+    body: JSON.stringify({ model: EMBEDDING_MODEL, dimensions: EMBEDDING_DIM, input: texts }),
+  });
+  if (!res.ok) {
+    // Surface status only — never the input texts (no content in errors/logs, §11.10).
+    const detail = await res.text().catch(() => '');
+    throw new Error(`embed failed: ${res.status} ${res.statusText} ${detail.slice(0, 200)}`);
+  }
+
+  const json = (await res.json()) as { data?: Array<{ index: number; embedding: number[] }> };
+  const data = json.data ?? [];
+  // OpenAI returns vectors in input order, but sort by `index` defensively so a pairing bug can't mislabel.
+  const vectors = data.slice().sort((a, b) => a.index - b.index).map((d) => d.embedding);
+
+  if (vectors.length !== texts.length) {
+    throw new Error(`embed returned ${vectors.length} vectors for ${texts.length} inputs`);
+  }
+  for (const v of vectors) {
+    if (v.length !== EMBEDDING_DIM) {
+      throw new Error(`embed returned dim ${v.length}, expected the pinned ${EMBEDDING_DIM}`);
+    }
+  }
+  return vectors;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
