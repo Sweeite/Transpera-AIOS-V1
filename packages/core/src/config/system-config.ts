@@ -39,6 +39,10 @@ export const KNOWN_KEYS: ConfigKeySpec[] = [
   { key: 'trust_quarantine_threshold', default: 0.2, min: 0, max: 1, qualityAffecting: true }, // below → agent disabled (#29)
   { key: 'embedding_canary_drift_threshold', default: 0.02, min: 0.001, max: 0.2, qualityAffecting: false }, // mean cosine drift over the probe set that trips the alarm (#45)
   { key: 'generation_max_tokens', default: 1024, min: 64, max: 8192, qualityAffecting: false }, // cap on a synthesis call's output (#5 minimal callModel; #10 may route per TaskClass)
+  // The sensitivity ceiling assigned to a DENY / unprovisioned principal (#9). Defense-in-depth ONLY: it is
+  // never read while denyAll short-circuits retrievalWhereSql to `false`, so it does not affect retrieval
+  // quality (qualityAffecting:false). Default 1 = the LOWEST clearance; raising it widens the fail-closed floor.
+  { key: 'rbac_default_max_sensitivity', default: 1, min: 1, max: 5, qualityAffecting: false },
 ];
 
 /**

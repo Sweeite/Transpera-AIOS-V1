@@ -19,6 +19,19 @@ export interface Clearance {
   maxSensitivity: SensitivityLevel;
 }
 
+/**
+ * A role = the DEFAULT clearance + allowed agents for a class of user (§9.1). It is a PROVISIONING-time
+ * template: role defaults + per-user overrides are materialised into a `user_clearance` row when a user is
+ * set up. `getClearance()` reads the materialised row, NOT this — a missing row denies, it never falls back
+ * to a role default (that would let an unprovisioned user inherit a role's zones). (#9)
+ */
+export interface Role {
+  id: string; // role name, e.g. 'analyst' | 'finance_admin'
+  defaultAllowedZones: Zone[];
+  defaultMaxSensitivity: SensitivityLevel;
+  allowedAgents: string[];
+}
+
 /** Who a run acts as. Fixed at trigger time, immutable down the delegation tree (§7.5). */
 export type Principal =
   | { kind: 'user'; userId: string }
