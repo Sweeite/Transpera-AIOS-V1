@@ -1,0 +1,84 @@
+# Issue #51 — CI pipeline. This is what makes "wire the guards into CI" TRUE: the #46 gateway chokepoint,
+# the interim leak fixtures, and every other test only enforce anything if CI actually runs them on every
+# change. A PR that introduces a leak, a direct model call, or a failing fixture must go RED here.
+#
+# No provider API keys are configured — by design. The real-OpenAI/Claude tests self-skip without keys, so
+# CI is hermetic, fast, and free: typecheck + build + the pglite suite + the #46 chokepoint + the leak
+# fixtures (hermetic job), plus a real-Postgres lane (DB only, no model calls).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Lane 1: hermetic. typecheck → build → the full pglite suite (98 tests incl. #46 + leak fixtures). ──
+  hermetic:
+    name: hermetic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # ORDER IS LOAD-BEARING: typecheck → BUILD → test. Several tests import `@aios/shared`, which resolves
+      # to packages/shared/dist (see its package.json "exports"). dist MUST exist before vitest runs, or the
+      # suite goes red for the wrong reason (a missing build, not a real failure).
+      - run: pnpm typecheck
+      - run: pnpm -r build
+      - run: pnpm test
+
+  # ── Lane 2: real Postgres. The #2/#7 divergence catcher — pglite's pgvector is not Supabase's. A service ──
+  # container running the SAME pgvector Supabase ships (0.8.0) un-skips the gated real-Postgres tests.
+  real-postgres:
+    name: real-postgres
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # MUST match Supabase's pgvector version — 0.8.0 (the #2 finding). pglite also bundles 0.8.0, so all
+        # three lanes (pglite / this container / prod Supabase) exercise the SAME pgvector. A different tag
+        # here would validate a THIRD, divergent pgvector and defeat the entire point of this lane.
+        image: pgvector/pgvector:0.8.0-pg15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Un-skips the gated real-Postgres tests (supabase-migration.real.test.ts applies every migration on
+      # real pgvector; engine-boot.real.test.ts proves the engine connection assembles). They self-skip via
+      # describe.skipIf(!SUPABASE_DB_URL). No provider keys — DB only.
+      SUPABASE_DB_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build # @aios/shared dist (type-only at runtime today, but future-proof + cheap)
+      # Run ONLY the real-Postgres-gated files; the hermetic job already ran the full pglite suite. Passing
+      # explicit paths overrides the config's include glob.
+      - run: pnpm exec vitest run tests/core/supabase-migration.real.test.ts tests/core/engine-boot.real.test.ts

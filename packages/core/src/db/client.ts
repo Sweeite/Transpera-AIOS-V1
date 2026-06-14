@@ -44,6 +44,10 @@ function requireUrl(envVar: 'DATABASE_URL' | 'DATABASE_URL_SESSION'): string {
 // first use so an import never opens a socket.
 let _db: Db | undefined;
 let _workerDb: Db | undefined;
+// Keep the raw postgres.js handles so the pools can be drained on graceful shutdown (and so tests don't leak
+// open sockets that keep a worker alive). drizzle wraps but does not expose the client, so we hold it here.
+let _dbClient: ReturnType<typeof postgres> | undefined;
+let _workerClient: ReturnType<typeof postgres> | undefined;
 
 /**
  * Pooled, TRANSACTION-mode connection (DATABASE_URL → Supavisor). For the stateless API/engine path.
@@ -53,8 +57,8 @@ let _workerDb: Db | undefined;
 export function getDb(): Db {
   if (!_db) {
     requireTenantId(); // a connection without a bound tenant is a leak surface — fail-closed
-    const client = postgres(requireUrl('DATABASE_URL'), { prepare: false });
-    _db = drizzle(client, { schema });
+    _dbClient = postgres(requireUrl('DATABASE_URL'), { prepare: false });
+    _db = drizzle(_dbClient, { schema });
   }
   return _db;
 }
@@ -66,8 +70,21 @@ export function getDb(): Db {
 export function getWorkerDb(): Db {
   if (!_workerDb) {
     requireTenantId();
-    const client = postgres(requireUrl('DATABASE_URL_SESSION'));
-    _workerDb = drizzle(client, { schema });
+    _workerClient = postgres(requireUrl('DATABASE_URL_SESSION'));
+    _workerDb = drizzle(_workerClient, { schema });
   }
   return _workerDb;
+}
+
+/**
+ * Drain both connection pools and reset the singletons. For graceful shutdown (SIGTERM) and for tests that
+ * open a real connection — without it, postgres.js keeps idle sockets open and the process won't exit cleanly.
+ * Safe to call when nothing was ever opened.
+ */
+export async function closeDb(): Promise<void> {
+  await Promise.all([_dbClient?.end({ timeout: 5 }), _workerClient?.end({ timeout: 5 })]);
+  _db = undefined;
+  _workerDb = undefined;
+  _dbClient = undefined;
+  _workerClient = undefined;
 }
