@@ -79,6 +79,29 @@ ONBOARDING — <client name>   ·   started ____   ·   live ____
 
 ---
 
+## 🎚️ Strictness tuning (trustworthy ↔ helpful) — a per-client dial, not a switch
+
+The brain leans conservative by default (a confident *wrong* answer is worse for a business than "I don't know", §3) — but "too strict" feels dumb. It is a **slider**, tuned per client, never by gut.
+
+**It already has three modes, not two** — the middle one is the "try to help, honestly" path:
+- **"I know this"** — grounded in memory, sourced.
+- **"General inference"** — it reasons/cobbles a take, **clearly labelled** as inference (not a business fact). This is the anti-dumb mode; M0 ships it nearly off, later milestones open it up.
+- **Abstain** — only when there's genuinely nothing useful.
+
+**The answer policy is graceful degradation, not refusal:** ground it if possible → else offer a reasoned take (marked inference) → else show what the **live systems** say (federation) → else "want me to capture an answer?". It always tries to be useful; it's just transparent about which rung it's on.
+
+**The dials (all tunable, scoped per client via `system_config`, gated + audited):**
+- `retrieval_min_relevance` (the floor) — lower = tries harder on weaker matches; higher = stricter. The primary knob.
+- The synthesis **prompt** — tight = extractive/strict; loose ("offer reasoned suggestions from these sources, marked inference") = more willing to cobble.
+- The **inference allowance** — how freely it adds reasoned-but-unsourced takes.
+- **Model routing** (`→ #10`) — a stronger model cobbles *intelligently* when allowed.
+
+**Tune against eval fixtures, not vibes (`→ #32/#33`).** Build fixtures that encode *both* failure modes — "must NOT invent a business fact" AND "SHOULD helpfully infer here" — and move the dials until both pass. The self-improvement loop watches the balance live: abstention rate (rising = honest), miss rate (too strict), low-rated-answer rate (too loose), and *proposes* floor/prompt changes when it drifts. Conservative client → higher floor; "move fast" client → lower floor + more inference. Same engine, different dial.
+
+> Where the real intelligence lands (so it doesn't stay flat Q&A): strong-model routing (#10, M1), live-data blending (#23, M4), and the **agent layer that decomposes a goal into multi-step work** (#26/#27, M5 — the librarian→analyst leap). The M0 "flat Q&A" feel is the trustworthy *floor*, built first on purpose; the reasoning is layered on top.
+
+---
+
 ## 🗂️ Per-client record (copy one per client)
 
 ```
