@@ -12,7 +12,7 @@
  * one client's memory (global dedup) or silently re-embeds duplicates.
  */
 import { describe, it, expect } from 'vitest';
-import { freshDb, synthVector } from './helpers/pglite.ts';
+import { freshDb, synthVector, pgliteTx } from './helpers/pglite.ts';
 import { writeMemory, ingestSop } from '../../packages/core/src/memory/store.ts';
 import type { Embedder } from '../../packages/core/src/memory/store.ts';
 import type { Provenance } from '../../packages/shared/src/types.ts';
@@ -130,32 +130,64 @@ describe('writeMemory() happy path (#3)', () => {
     expect((await query(`SELECT count(*)::int AS n FROM memories`)).rows[0].n).toBe(2);
   });
 
-  it('flags labelConflict when a dedup re-upload is MORE restrictive — does not silently under-classify (principle #2)', async () => {
-    const { query } = await freshDb();
+  // #12 CLOSED the #3 obligation that this test originally only SIGNALLED. The behaviour split is now:
+  //   • same-zone sensitivity escalation → RELABEL (invalidate-old + write-new at max) — labelConflict resolved.
+  //   • zone differs                     → FREEZE stored + alertable audit (zones are unordered: no safe union),
+  //                                         labelConflict stays true (forward obligation: no review consumer yet).
+  //   • same-zone equal/lower            → plain dedup, stored already at least as restrictive.
+  it('a more-restrictive same-zone re-upload RELABELS (the #3 over-share, now closed) — not just a flag', async () => {
+    const { db, query } = await freshDb();
     const { embed } = fakeEmbedder();
     const statement = 'Client roster lives in the shared drive.';
     const base = { type: 'semantic' as const, namespace: 'org' as const, statement, provenance: PROV };
 
-    // Stored at general / s1.
     const first = await writeMemory(query, { ...base, zone: 'general', sensitivityLevel: 1 }, { embed });
     expect(first.deduped).toBe(false);
     expect(first.labelConflict).toBe(false);
+    expect(first.relabeled).toBe(false);
 
-    // Re-upload demanding HIGHER sensitivity → deduped, but the restriction is NOT applied → conflict flagged.
-    const hotter = await writeMemory(query, { ...base, zone: 'general', sensitivityLevel: 4 }, { embed });
+    const hotter = await writeMemory(query, { ...base, zone: 'general', sensitivityLevel: 4 }, { embed, transaction: pgliteTx(db) });
     expect(hotter.deduped).toBe(true);
-    expect(hotter.labelConflict).toBe(true);
-    expect(hotter.memory.sensitivityLevel).toBe(1); // stored label unchanged (relabel is #12)
+    expect(hotter.relabeled).toBe(true);
+    expect(hotter.labelConflict).toBe(false); // the restriction was APPLIED — no longer a dangling flag
+    expect(hotter.memory.sensitivityLevel).toBe(4); // stored label RAISED
+    expect(hotter.memory.id).not.toBe(first.memory.id);
+    expect((await query(`SELECT status FROM memories WHERE id=$1`, [first.memory.id])).rows[0].status).toBe('invalidated');
+  });
 
-    // Re-upload into a DIFFERENT zone → also a conflict (zones aren't ordinal; any difference is surfaced).
-    const elsewhere = await writeMemory(query, { ...base, zone: 'finance', sensitivityLevel: 1 }, { embed });
+  it('a DIFFERING-zone re-upload is FROZEN, not auto-relabeled (zones unordered → no fail-closed union)', async () => {
+    const { db, query } = await freshDb();
+    const { embed } = fakeEmbedder();
+    const statement = 'Client roster lives in the shared drive.';
+    const base = { type: 'semantic' as const, namespace: 'org' as const, statement, provenance: PROV };
+
+    const first = await writeMemory(query, { ...base, zone: 'general', sensitivityLevel: 1 }, { embed });
+    const elsewhere = await writeMemory(query, { ...base, zone: 'finance', sensitivityLevel: 1 }, { embed, transaction: pgliteTx(db) });
+
     expect(elsewhere.deduped).toBe(true);
+    expect(elsewhere.relabeled).toBe(false); // NEVER auto-moves/unions across zones
     expect(elsewhere.labelConflict).toBe(true);
+    expect(elsewhere.memory.id).toBe(first.memory.id); // stored row FROZEN, unchanged (no broadening)
+    expect(elsewhere.memory.zone).toBe('general');
+    // ...and the conflict is both ALERTABLE (tamper-evident audit event) AND a triage WORK-ITEM (review_queue,
+    // drained by #25/#33). Producer wired atomically with the freeze.
+    const zc = (await query(`SELECT count(*)::int AS n FROM audit_log WHERE action='memory.relabel.zone_conflict'`)).rows[0].n;
+    expect(zc).toBe(1);
+    const rq = (await query(`SELECT kind, status, payload FROM review_queue WHERE kind='sensitivity_broaden'`)).rows;
+    expect(rq).toHaveLength(1); // exactly one pending review item
+    expect(rq[0].status).toBe('pending');
+    const payload = typeof rq[0].payload === 'string' ? JSON.parse(rq[0].payload) : rq[0].payload;
+    expect(payload.memoryId).toBe(first.memory.id); // refs + deltas
+    expect(payload.storedZone).toBe('general');
+    expect(payload.incomingZone).toBe('finance');
+    // refs-only (§11.10): the statement text must NOT be in the work-item payload.
+    expect(JSON.stringify(payload)).not.toContain('Client roster lives in the shared drive');
 
-    // Re-upload LESS restrictive (same zone, lower-or-equal sensitivity) → no conflict; stored is already safe.
+    // Re-upload LESS restrictive (same zone, ≤ sensitivity) → plain dedup, no conflict; stored already safe.
     const cooler = await writeMemory(query, { ...base, zone: 'general', sensitivityLevel: 1 }, { embed });
     expect(cooler.deduped).toBe(true);
     expect(cooler.labelConflict).toBe(false);
+    expect(cooler.relabeled).toBe(false);
   });
 
   it('never writes raw statement text into provenance (refs only, #3 Watch)', async () => {

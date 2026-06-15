@@ -57,6 +57,7 @@ export const memories = pgTable('memories', {
   status: text('status').$type<MemoryStatus>().notNull(),
   validFrom: tstz('valid_from').notNull(),
   validTo: tstz('valid_to'), // null ⇒ active (§4.4)
+  invalidatedReason: text('invalidated_reason'), // #12: free-text WHY of an invalidation (0013); null while active
   entityRef: text('entity_ref'), // slot (§4.5) — all-or-nothing with attribute/slotValue (DB CHECK)
   attribute: text('attribute'),
   slotValue: text('slot_value'), // @aios/shared MemorySlot.value (column renamed to avoid the SQL keyword)

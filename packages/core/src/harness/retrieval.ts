@@ -134,12 +134,17 @@ export async function retrieve(queryText: string, deps: RetrieveDeps): Promise<R
   // ONE query: filter (predicate) → rank (`<=>` cosine distance) → cap. NEVER retrieve-then-filter. #13 passes
   // BOTH `predicate` (a fragment numbering from $3) AND `predicateParams` (its bound values) — appended after
   // the vector ($1) and limit ($2) so the placeholders line up. The default 'true' / [] is the no-op seam.
+  //
+  // ⚠ #12: `status = 'active'` is a BASE conjunct — a memory-lifecycle invariant ANDed with, and PARENTHESISING,
+  //   the swappable #13 predicate. It is NOT folded into `predicate` so #13 can never drop it (an invalidated
+  //   fact must never surface, even with predicate='true'). Matches the `memories_status_active` partial index.
+  //   A literal conjunct adds no param, so the predicate's $3+ numbering is unchanged.
   const { rows } = await deps.query(
     `SELECT id, namespace, zone, sensitivity_level, type, statement, content_hash, provenance,
             embedding_model, embedding_version, created_at,
             (embedding <=> $1::vector)::float8 AS distance
        FROM memories
-      WHERE ${predicate}
+      WHERE status = 'active' AND (${predicate})
       ORDER BY embedding <=> $1::vector
       LIMIT $2`,
     [`[${queryVec.join(',')}]`, maxResults, ...predicateParams],
