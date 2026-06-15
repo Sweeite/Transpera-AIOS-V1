@@ -22,15 +22,20 @@
 8. 🟢 **You** → copy the result, paste into the 🟣 review session.
 9. 🟣 **Review session** → confirms it's safe to commit, or lists fixes (loop 6–8 if needed).
 10. 🔵 **Build session** → commits as one clean `#N` commit, then `git push`.
-11. **Repeat** for the next issue.
+11. 🟣 **Review session** → after the final OK, **closes the issue itself** (`gh issue close N`) and confirms **CI is green on the push** (both lanes — and that any new `*.real.test.ts` actually *ran*: the file count must bump). Don't delegate the close — a delegated one silently dropped #8.
+12. **Fresh 🔵 build session for the next issue.** Start each issue in a clean build chat — a session carried across several issues degrades ("the 250k dumbzone"; #10 was built degraded). Everything it needs is in the repo + the command, so nothing's lost. (Run two builds in parallel only for genuinely independent slices in different subsystems via `git worktree` — never two 🔒 issues.)
 
-## After every milestone (M0, M1, …)
-🟣 In the review session, run the **milestone gate** (per `AIOS_QA_Playbook.md`): end-to-end behaviour works, leak fixtures green, an adversarial review, one real scenario driven through it. **Don't start the next milestone until it's green.**
+## After every milestone (M0, M1, …) — the boundary ritual
+🟣 In the review session: run the **milestone gate** (per `AIOS_QA_Playbook.md`) — end-to-end behaviour works, leak fixtures green, an adversarial review, one real scenario driven through it. **Don't start the next milestone until it's green.** Then:
+- **Refresh both sessions** — the review session has accumulated too; start a fresh one (it reloads from the repo/memory).
+- **Write a handover** (`AIOS_Handover_<milestone>.md`) — a "resume here" state snapshot (closed/open, live seams, deferred tripwires, next milestone's first move).
+- **Boot the demo** (`pnpm ask`) — actually *feel* what the milestone built before moving on; it's the behavioural-grill half of the gate.
 
 ## Tips
 - Tell the build session to **`git push` after each commit** (it commits locally otherwise — the remote drifts).
 - Hitting Max usage limits? **⚙️ plumbing issues** can drop to `/model sonnet` (the issue's Model line notes which) — otherwise stay on Opus.
-- **Lost the review chat?** Start a fresh one with `Be my review partner per AIOS_Review_Partner.md`. Nothing's lost — the standards live in the repo.
+- **Lost the review chat?** Start a fresh one with `Be my review partner per AIOS_Review_Partner.md` + the latest handover. Nothing's lost — the standards live in the repo.
+- **Reviewer grounds in the real code** — read the actual files + run the gate yourself; never approve off a build summary (it can lie at high context).
 - **Golden rule:** never let the build session commit until the 🟣 review session has seen the result.
 
 ---
