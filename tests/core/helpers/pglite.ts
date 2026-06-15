@@ -68,3 +68,14 @@ export function synthVector(seed: string, dim: number = EMBEDDING_DIM): number[]
 export function vec(v: number[]): string {
   return `[${v.join(',')}]`;
 }
+
+/**
+ * A single-connection transaction runner over pglite — the shape `appendAudit`'s concurrency guard needs to
+ * take the advisory lock + read-head + insert on ONE backend. pglite IS real Postgres (WASM), so the lock SQL
+ * (`pg_advisory_xact_lock`) actually executes here; what pglite CANNOT do is exercise the RACE (single-threaded
+ * — concurrent appenders never truly overlap). The race is proven on the real-PG lane (#51 / SUPABASE_DB_URL).
+ */
+export function pgliteTx(db: PGlite) {
+  return <T>(fn: (q: Query) => Promise<T>): Promise<T> =>
+    db.transaction(async (tx) => fn((sql, params) => tx.query(sql, params as any[]) as Promise<{ rows: any[] }>));
+}

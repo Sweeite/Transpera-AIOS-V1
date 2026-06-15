@@ -495,15 +495,18 @@ export async function callModel<T = string>(opts: CallOptions<T>, deps: GatewayD
       ...(tokensOut ? { tokensOut } : {}),
       ...(cacheReadTokens ? { cacheReadTokens } : {}),
       ...(cacheWriteTokens ? { cacheWriteTokens } : {}),
-      ...(succeeded && fallbackInfo ? { fallback: fallbackInfo } : {}),
+      // #10 carry-forward (1): record fallback on the span REGARDLESS of success — a call that fell back and
+      // THEN failed must still show on its span that a downgrade was attempted (not only on a successful usage).
+      ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
     });
   }
 
   if (!succeeded) {
-    // LOUD — never surface a malformed/empty answer. The aggregate spend is already on the span above.
+    // LOUD — never surface a malformed/empty answer. The aggregate spend is on the span above; #10 carry-forward
+    // (2): also surface costUsd in the throw so a failed call's spend is visible even with NO onSpan sink wired.
     throw new Error(
       `callModel: exhausted ${chain.length} model(s) for taskClass=${opts.taskClass} after ${attempts} round-trip(s) ` +
-        `(last: ${lastReason}) — refusing to surface a malformed/empty answer.`,
+        `(last: ${lastReason}, costUsd=${costUsd}) — refusing to surface a malformed/empty answer.`,
     );
   }
 

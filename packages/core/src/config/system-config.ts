@@ -3,7 +3,7 @@
  * Every threshold/weight/cadence/floor is a system_config row: gated / scoped / bounded / audited & reversible.
  */
 import type { Namespace } from '@aios/shared';
-import { appendAudit, type QueryFn } from '../audit/audit-log.js';
+import { appendAudit, type QueryFn, type TxFn } from '../audit/audit-log.js';
 
 export interface ConfigKeySpec {
   key: string;
@@ -22,6 +22,9 @@ export const KNOWN_KEYS: ConfigKeySpec[] = [
   { key: 'retrieval_min_relevance', default: 0.608, min: 0.5, max: 0.95, qualityAffecting: true },
   { key: 'retrieval_max_results', default: 20, min: 1, max: 100, qualityAffecting: true },
   { key: 'chunk_ttl_days', default: 90, min: 7, max: 365, qualityAffecting: false },
+  // Trace store TTL (#11): a span is debug-held only ephemerally, then auto-pruned (§6.9). Plumbing, not
+  // retrieval quality. The prune job (harness/trace.ts) deletes traces past this age; audit_log is FOREVER.
+  { key: 'trace_ttl_days', default: 30, min: 1, max: 365, qualityAffecting: false },
   { key: 'decay_min_utility_score', default: 0.2, min: 0, max: 1, qualityAffecting: true },
   { key: 'consolidation_dedup_similarity_threshold', default: 0.92, min: 0.8, max: 0.99, qualityAffecting: true },
   { key: 'consolidation_auto_merge_threshold', default: 0.97, min: 0.9, max: 0.999, qualityAffecting: true },
@@ -87,6 +90,9 @@ export interface ConfigAnomaly {
 
 export interface ConfigDeps {
   query: QueryFn;
+  /** The audit append's advisory-lock transaction runner (#11). PROD passes it so config-change audit rows are
+   *  serialised on the chain; absent ⇒ the unlocked append path, tolerated only under the test runner. */
+  transaction?: TxFn;
   /** READ-path alarm for a stored OOB/mistyped value. Omitted ⇒ a LOUD default (logs to stderr) — never silent. */
   onAnomaly?: (anomaly: ConfigAnomaly) => void;
   /** The code-sourced key specs. Defaults to KNOWN_KEYS; injectable ONLY to simulate a code deploy that changed
@@ -247,7 +253,7 @@ export async function proposeConfigChange(
       action: 'config.applied',
       targetRef: targetRef(key, ns),
       metadata: { key, namespace: ns, old, new: value, via: 'instant' },
-    });
+    }, { transaction: deps.transaction });
     return { status: 'applied', auditId: audit.id };
   }
 
@@ -279,7 +285,7 @@ export async function proposeConfigChange(
     action: 'config.proposed',
     targetRef: targetRef(key, ns),
     metadata: { key, namespace: ns, old: current, new: value, proposalId },
-  });
+  }, { transaction: deps.transaction });
   return { status: 'pending', proposalId };
 }
 
@@ -313,7 +319,7 @@ export async function approveConfigChange(
     action: 'config.applied',
     targetRef: targetRef(p.key, ns),
     metadata: { key: p.key, namespace: ns, old, new: value, proposalId, via: 'approval' },
-  });
+  }, { transaction: deps.transaction });
   return { auditId: audit.id };
 }
 
@@ -340,7 +346,7 @@ export async function rejectConfigChange(
     action: 'config.rejected',
     targetRef: targetRef(p.key, p.namespace ?? null),
     metadata: { key: p.key, namespace: p.namespace ?? null, proposed: p.proposed_value, proposalId },
-  });
+  }, { transaction: deps.transaction });
 }
 
 /** Applied-value audit actions — the only entries a rollback may target (see rollbackConfig). */
@@ -382,6 +388,6 @@ export async function rollbackConfig(
     action: 'config.rolled_back',
     targetRef: targetRef(key, ns),
     metadata: { key, namespace: ns, old: current, new: restore, revertOf: auditId },
-  });
+  }, { transaction: deps.transaction });
   return { auditId: audit.id };
 }

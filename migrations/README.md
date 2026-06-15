@@ -59,3 +59,5 @@ Apply to a **fresh** database (a new tenant, a test scratch DB).
 | `0008_conversation.sql` | #7 | `threads`, `messages` (the `recentThread` source) |
 | `0009_permissions.sql` | #7 | `user_clearance`, `roles` |
 | `0010_config_observability.sql` | #7 | `system_config`, `feedback`, `suggestions`, `review_queue`, `monitors`, `metrics_rollup`, `traces`, `audit_log` |
+| `0011_config_proposals.sql` | #8 | `config_proposals` (the gated approval queue for quality-affecting config changes) |
+| `0012_tracing_audit_hardening.sql` | #11 | `traces` clearance tag (`zone`, `sensitivity_level`, `namespace` — fail-closed sentinels); `audit_log.hash_input` (the canonical bytes hashed, so `verifyChain` never re-canonicalises a jsonb roundtrip) |

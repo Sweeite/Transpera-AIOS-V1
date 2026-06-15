@@ -31,6 +31,8 @@ export * as intent from './intent/router.js';
 
 // Cross-cutting
 export * as systemConfig from './config/system-config.js';
+export * as audit from './audit/audit-log.js';
+export * as auditEvents from './audit/events.js';
 export * as rbac from './rbac/permissions.js';
 export * as hooks from './hooks/registry.js';
 export * as db from './db/client.js';

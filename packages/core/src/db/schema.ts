@@ -287,6 +287,11 @@ export const traces = pgTable('traces', {
   costUsd: doublePrecision('cost_usd'),
   durationMs: integer('duration_ms').notNull(),
   rating: doublePrecision('rating'),
+  // ── clearance tag (#11, 0012) — same names as memories/chunks so retrievalWhereSql filters traces verbatim.
+  // Tagged at write with the CONTENT's clearance; fail-closed sentinels keep an untagged span invisible. ──
+  zone: text('zone').notNull(),
+  sensitivityLevel: smallint('sensitivity_level').notNull(),
+  namespace: text('namespace').notNull(),
   createdAt: tstz('created_at').notNull().defaultNow(),
 });
 
@@ -300,6 +305,9 @@ export const auditLog = pgTable('audit_log', {
   metadata: jsonb('metadata').notNull(),
   prevHash: text('prev_hash'),
   hash: text('hash').notNull(),
+  // The exact canonical bytes hashed at write (#11, 0012) — verifyChain recomputes from this text, never from
+  // a jsonb-roundtripped row (no float-normalisation false-tamper). Nullable for the expand/contract window.
+  hashInput: text('hash_input'),
   createdAt: tstz('created_at').notNull().defaultNow(),
 });
 
@@ -358,3 +366,4 @@ export type MessageRow = typeof messages.$inferSelect;
 export type InboxItemRow = typeof inboxItems.$inferSelect;
 export type UserClearanceRow = typeof userClearance.$inferSelect;
 export type TraceRow = typeof traces.$inferSelect;
+export type AuditRow = typeof auditLog.$inferSelect; // #11 — the typed audit read shape (refs/scalars only)
