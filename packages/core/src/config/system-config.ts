@@ -39,7 +39,18 @@ export const KNOWN_KEYS: ConfigKeySpec[] = [
   { key: 'trust_constrain_threshold', default: 0.5, min: 0, max: 1, qualityAffecting: true }, // below → agent outputs need approval (#29)
   { key: 'trust_quarantine_threshold', default: 0.2, min: 0, max: 1, qualityAffecting: true }, // below → agent disabled (#29)
   { key: 'embedding_canary_drift_threshold', default: 0.02, min: 0.001, max: 0.2, qualityAffecting: false }, // mean cosine drift over the probe set that trips the alarm (#45)
-  { key: 'generation_max_tokens', default: 1024, min: 64, max: 8192, qualityAffecting: false }, // cap on a synthesis call's output (#5 minimal callModel; #10 may route per TaskClass)
+  { key: 'generation_max_tokens', default: 1024, min: 64, max: 8192, qualityAffecting: false }, // cap on a synthesis call's output (#5 minimal callModel; #10 the single output cap)
+  // ── gateway dials (#10) — bounded; no magic numbers in the chokepoint (§4.8). qualityAffecting:false
+  //    (plumbing/latency, not retrieval quality). The gateway routes Anthropic tiers, retries, repairs, falls back.
+  { key: 'gateway_retry_count', default: 2, min: 0, max: 5, qualityAffecting: false }, // transient/timeout retries per model before fallback
+  { key: 'gateway_retry_backoff_ms', default: 250, min: 0, max: 5000, qualityAffecting: false }, // base linear backoff between retries
+  { key: 'gateway_repair_attempts', default: 1, min: 0, max: 2, qualityAffecting: false }, // THE audit cap: structured-validation repairs on the primary
+  { key: 'gateway_request_timeout_ms', default: 60000, min: 1000, max: 600000, qualityAffecting: false }, // per-call abort timeout
+  // Overall wall-clock ceiling across ALL attempts — caps total time so it can't reach N × per-call timeout.
+  // DISTINCT from `latency_budget_ms` (8s): that is retrieval's interactive SLO; a single Opus reasoning call can
+  // exceed it, so the gateway needs its own headroom (≈ primary timeout + one fallback). A caller wanting a tight
+  // interactive budget passes a smaller deadline via the GatewayDeps config seam.
+  { key: 'gateway_total_deadline_ms', default: 120000, min: 1000, max: 600000, qualityAffecting: false },
   // The sensitivity ceiling assigned to a DENY / unprovisioned principal (#9). Defense-in-depth ONLY: it is
   // never read while denyAll short-circuits retrievalWhereSql to `false`, so it does not affect retrieval
   // quality (qualityAffecting:false). Default 1 = the LOWEST clearance; raising it widens the fail-closed floor.

@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { z } from 'zod';
-import { callModel, GENERATION_MODEL } from '../../packages/core/src/harness/gateway.ts';
+import { callModel, SONNET_MODEL } from '../../packages/core/src/harness/gateway.ts';
 
 const Schema = z.object({ claims: z.array(z.object({ text: z.string(), sourceId: z.string().nullable().optional() })) });
 
@@ -54,26 +54,30 @@ describe('callModel() structured path (#5, forced tool-use)', () => {
     expect(req.body.tool_choice).toEqual({ type: 'tool', name: 'emit_structured_output' });
     expect(req.body.tools[0].input_schema.type).toBe('object');
     expect(req.body.tools[0].input_schema.$schema).toBeUndefined(); // stripped — Anthropic wants a bare schema
-    expect(req.body.model).toBe(GENERATION_MODEL);
+    // #10 routing: a STRUCTURED 'synthesize' call routes to the safe Sonnet tier (conservative until #32),
+    // not the Haiku pin #5 used. The forced-tool structured path itself is unchanged.
+    expect(req.body.model).toBe(SONNET_MODEL);
     expect(req.headers['x-api-key']).toBe('test-key');
 
     // validated, typed output + usage
     expect(output).toEqual({ claims: [{ text: 'a', sourceId: 'mem-1' }] });
-    expect(usage).toMatchObject({ model: GENERATION_MODEL, tokensIn: 10, tokensOut: 5 });
+    expect(usage).toMatchObject({ model: SONNET_MODEL, tokensIn: 10, tokensOut: 5 });
   });
 
-  it('fails LOUD when the model returns no tool_use block (no silent malformed answer)', async () => {
+  it('fails LOUD when the model returns no tool_use block (repair → fallback → loud, no silent malformed answer)', async () => {
     stubFetch({ content: [{ type: 'text', text: 'I will not use the tool' }], usage: {} });
+    // #10: malformed survives the bounded repair + the fallback model → the chain is exhausted loudly,
+    // naming the structural reason. (Detailed repair/fallback mechanics live in gateway-routing-fallback.)
     await expect(
       callModel({ taskClass: 'synthesize', schema: Schema, messages: [{ role: 'user', content: 'q' }] }),
-    ).rejects.toThrow(/no tool_use block/i);
+    ).rejects.toThrow(/tool_use block[\s\S]*refusing to surface/i);
   });
 
-  it('fails LOUD when the tool input violates the schema (zod, repair deferred to #10)', async () => {
+  it('fails LOUD when the tool input violates the schema (zod → repair → fallback → loud)', async () => {
     stubFetch({ content: [{ type: 'tool_use', name: 'emit_structured_output', input: { claims: 'not-an-array' } }], usage: {} });
     await expect(
       callModel({ taskClass: 'synthesize', schema: Schema, messages: [{ role: 'user', content: 'q' }] }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/exhausted/i);
   });
 
   it('fails LOUD when ANTHROPIC_API_KEY is missing', async () => {

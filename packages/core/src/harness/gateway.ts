@@ -16,21 +16,32 @@ export type TaskClass = 'classify' | 'summarise' | 'extract' | 'reason' | 'synth
 export type Embedder = (texts: string[]) => Promise<number[][]>;
 
 export interface CallOptions<T = string> {
-  taskClass: TaskClass; // drives multi-provider routing (cheap vs strong), quality-gated by eval fixtures
-  system?: string; // stable prefix → prompt-cached (~90% off cached input tokens, §5.3)
+  taskClass: TaskClass; // drives Anthropic-tier routing (Haiku→Sonnet→Opus), quality-gated by eval fixtures (#32)
+  system?: string; // stable prefix → prompt-cached (cache_control on the system block; ~0.1× on cache-read tokens, §5.3)
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   /** When set, the model is FORCED to emit structured output validated against this zod schema. */
   schema?: z.ZodType<T>;
-  stream?: boolean; // #10 — streaming not wired in the M0 minimal call
+  stream?: boolean; // #10 ships NON-streaming only; stream:true fails loud (real streaming deferred to #54).
+  maxTokens?: number; // optional per-call override of the bounded `generation_max_tokens` config cap.
 }
 
-/** What the gateway genuinely knows about a call. #10 folds this into a full `TraceSpan` with the run context
- *  (taskId / principal / trigger) the gateway does not own, and computes costUsd via the pricing table. */
+/**
+ * What the gateway genuinely knows about a call. #11 folds this into a full `TraceSpan` with the run context
+ * (taskId / principal / trigger) the gateway does not own. NOTE: `model` is the model that ACTUALLY answered
+ * (a fallback may have served it — see `fallback`), while the token/cost figures are the AGGREGATE across
+ * EVERY round-trip this call made (failed primary + repair + fallback), so cost is never under-reported.
+ */
 export interface ModelUsage {
-  model: string;
-  tokensIn?: number;
-  tokensOut?: number;
-  durationMs: number;
+  model: string; // the model that produced the returned answer (post-fallback)
+  tokensIn?: number; // aggregate input tokens billed across all round-trips
+  tokensOut?: number; // aggregate output tokens across all round-trips
+  cacheReadTokens?: number; // prompt-cache hits — priced at the cache-read rate (the "reduced input cost", §5.3)
+  cacheWriteTokens?: number; // prompt-cache writes — priced at the 5-min ephemeral write rate
+  costUsd?: number; // aggregate spend across all round-trips, per the pricing table (§11.7)
+  durationMs: number; // total wall time of the whole call (all attempts)
+  attempts?: number; // number of transport round-trips made (observability + the bounded-ceiling guard)
+  /** Set whenever the answering model is NOT the routed primary — a downgrade is a quality event, never silent. */
+  fallback?: { from: string; reason: 'timeout' | 'transient' | 'validation' };
 }
 
 export interface CallResult<T = string> {
@@ -38,37 +49,161 @@ export interface CallResult<T = string> {
   usage: ModelUsage;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Transport seam (DI) + provider adapter. The transport is ONE provider HTTP round-trip — injectable so
+// fallback / repair / cost / cache-hit behaviour is testable HERMETICALLY (a fake that simulates a timeout,
+// malformed output, a cache-read) WITHOUT a global-fetch stub or the real API. All retry/repair/fallback
+// orchestration sits ABOVE the transport, in callModel. The adapter (Anthropic, the only one today) is the
+// per-provider concern: it builds the request body (incl. the cache_control prefix) and parses the response.
+// Both live in THIS file so the #46 chokepoint stays singular — no provider SDK import, no host literal elsewhere.
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** A single provider HTTP call, as the adapter has prepared it. */
+export interface ProviderRequest {
+  url: string;
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+  model: string;
+  timeoutMs: number; // effective per-call timeout = min(request timeout, remaining total deadline)
+}
+
+/** The raw provider JSON the adapter knows how to parse (Anthropic messages shape). */
+export interface ProviderRawResponse {
+  content?: Array<{ type: string; name?: string; text?: string; input?: unknown }>;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+}
+
+export type Transport = (req: ProviderRequest) => Promise<ProviderRawResponse>;
+
+/** Why a transport call failed — drives the orchestration: fatal short-circuits, transient/timeout retry+fallback. */
+export type TransportErrorKind = 'timeout' | 'transient' | 'fatal';
+
+/** A typed transport failure. `fatal` (4xx except 429) must surface immediately — a bad key/model id will
+ *  fail identically on retry/fallback, so masking it behind a downgrade would hide the real bug. */
+export class GatewayTransportError extends Error {
+  constructor(
+    public readonly kind: TransportErrorKind,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'GatewayTransportError';
+  }
+}
+
+/** The gateway-known slice of a trace span (#11 attaches run context + writes the store). */
+export interface GatewaySpan {
+  model: string;
+  taskClass: TaskClass;
+  structured: boolean;
+  ok: boolean; // false ⇒ the call exhausted its chain and threw — the spend is still recorded (no silent failure)
+  tokensIn?: number;
+  tokensOut?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  costUsd?: number;
+  durationMs: number;
+  attempts: number;
+  fallback?: { from: string; reason: 'timeout' | 'transient' | 'validation' };
+}
+
+/** Bounded dials — every one a `system_config` key (no magic numbers, §4.8). Resolved per call. */
+export interface GatewayConfig {
+  retryCount: number; // transient/timeout retries per model BEFORE advancing to the fallback
+  retryBackoffMs: number; // base linear backoff between retries
+  repairAttempts: number; // THE audit cap — structured-validation repairs on the PRIMARY (default 1)
+  requestTimeoutMs: number; // per-call abort timeout
+  totalDeadlineMs: number; // overall wall-clock ceiling across all attempts (caps N × per-call)
+  maxTokens: number; // output cap (generation_max_tokens)
+}
+
+export interface GatewayDeps {
+  transport?: Transport; // default: the real Anthropic fetch transport
+  onSpan?: (span: GatewaySpan) => void; // trace sink (#11). Absent ⇒ no span (caller's choice); fallback still on usage.
+  now?: () => number; // injectable clock (deadline checks) — default Date.now
+  sleep?: (ms: number) => Promise<void>; // injectable backoff — default real timer
+  /** Scope-resolved config overrides. Absent keys fall back to the sync declared `defaultFor` (no flag-day, per
+   *  the #8 carry-forward: gateway stays on `defaultFor`). A caller WITH a `query` can pass getConfig values here. */
+  config?: Partial<GatewayConfig>;
+}
+
 // The forced-tool name the structured path uses. The model is required to call exactly this tool, so its
-// validated input IS the structured output — far more reliable than "return JSON + parse" (which matters
-// because repair is deferred to #10).
+// validated input IS the structured output — far more reliable than "return JSON + parse".
 const STRUCTURED_TOOL_NAME = 'emit_structured_output';
 
-/**
- * MINIMAL M0 model call (Issue #5) — the single chokepoint for generation, mirroring `embed` below.
- *
- * Direct REST (fetch), no provider SDK imported → the #46 chokepoint test stays green. Structured calls use
- * Anthropic FORCED TOOL-USE (tool_choice) + zod validation of the tool input; malformed/empty output FAILS
- * LOUD (no silent malformed output, no repair yet). One pinned model — #10 adds the TaskClass routing table,
- * BYO keys, fallback chain, prompt caching, repair-or-fail retry, and the per-call cost → cost monitor (§11.7).
- */
-export async function callModel<T = string>(opts: CallOptions<T>): Promise<CallResult<T>> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY is not set — callModel cannot run (fail loud, never a silent empty answer).');
-  }
+// ── Generation models: Anthropic tiers (generation is Claude-first, Brief §12). Embeddings stay pinned to
+//    OpenAI (below) and are NEVER routed (#1) — out of scope here. ────────────────────────────────────────
+const HAIKU_MODEL = 'claude-haiku-4-5-20251001'; // dated id — the cheap synthesis tier
+export const SONNET_MODEL = 'claude-sonnet-4-6'; // the safe default for structured/hard classes (until #32)
+export const OPUS_MODEL = 'claude-opus-4-8'; // the strongest fallback
 
-  const maxTokens = defaultFor('generation_max_tokens') as number;
-  const body: Record<string, unknown> = {
-    model: GENERATION_MODEL,
-    max_tokens: maxTokens,
-    messages: opts.messages,
-    ...(opts.system ? { system: opts.system } : {}),
+// Pricing — $ per 1,000,000 tokens. Source: claude-api skill, "Current Models (cached: 2026-06-04)".
+// Cache-read = 0.1× input, cache-write (5-min ephemeral) = 1.25× input — claude-api prompt-caching reference.
+const PRICING: Record<string, { inPerMtok: number; outPerMtok: number }> = {
+  [HAIKU_MODEL]: { inPerMtok: 1.0, outPerMtok: 5.0 },
+  [SONNET_MODEL]: { inPerMtok: 3.0, outPerMtok: 15.0 },
+  [OPUS_MODEL]: { inPerMtok: 5.0, outPerMtok: 25.0 },
+};
+const CACHE_READ_MULT = 0.1; // claude-api: cache reads ~0.1× base input price
+const CACHE_WRITE_MULT = 1.25; // claude-api: 5-minute ephemeral cache writes ~1.25× base input price
+
+// Routing MAP (declared structure, not a scalar dial — allowed by the no-magic-numbers rule). Ordered chain:
+// [primary, fallback]. CONSERVATIVE UNTIL #32 (the Watch): a STRUCTURED call never STARTS on Haiku — a cheap
+// model bad at JSON burns the saving in repair cost. #32's eval fixtures will validate cheaper routes later.
+const TIER_CHAIN: Record<TaskClass, readonly [string, string]> = {
+  classify: [HAIKU_MODEL, SONNET_MODEL],
+  summarise: [HAIKU_MODEL, SONNET_MODEL],
+  extract: [SONNET_MODEL, OPUS_MODEL],
+  reason: [SONNET_MODEL, OPUS_MODEL],
+  synthesize: [SONNET_MODEL, OPUS_MODEL],
+};
+
+function routeChain(taskClass: TaskClass, structured: boolean): readonly [string, string] {
+  const base = TIER_CHAIN[taskClass];
+  // A structured call on a Haiku-primary class is upgraded to the safe chain until #32 clears the cheap route.
+  if (structured && base[0] === HAIKU_MODEL) return [SONNET_MODEL, OPUS_MODEL];
+  return base;
+}
+
+function resolveConfig(overrides?: Partial<GatewayConfig>): GatewayConfig {
+  // Each key reads the scope-resolved override, else the bounded declared default (sync, no DB — #8 carry-forward).
+  return {
+    retryCount: overrides?.retryCount ?? (defaultFor('gateway_retry_count') as number),
+    retryBackoffMs: overrides?.retryBackoffMs ?? (defaultFor('gateway_retry_backoff_ms') as number),
+    repairAttempts: overrides?.repairAttempts ?? (defaultFor('gateway_repair_attempts') as number),
+    requestTimeoutMs: overrides?.requestTimeoutMs ?? (defaultFor('gateway_request_timeout_ms') as number),
+    totalDeadlineMs: overrides?.totalDeadlineMs ?? (defaultFor('gateway_total_deadline_ms') as number),
+    maxTokens: overrides?.maxTokens ?? (defaultFor('generation_max_tokens') as number),
   };
+}
 
+const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
+
+function anthropicHeaders(apiKey: string): Record<string, string> {
+  return { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' };
+}
+
+/** Build the Anthropic request body for one model. Prompt caching is a per-provider adapter concern: the stable
+ *  `system` prefix carries cache_control so its tokens bill at the cache-read rate on repeat (per-model by
+ *  construction — each model builds its own body, so a Haiku-cached prefix is never sent on a Sonnet call). */
+function buildAnthropicBody<T>(
+  opts: CallOptions<T>,
+  model: string,
+  maxTokens: number,
+  messages: CallOptions<T>['messages'],
+): Record<string, unknown> {
+  const body: Record<string, unknown> = { model, max_tokens: maxTokens, messages };
+  if (opts.system) {
+    // Array form with cache_control — the stable prefix is prompt-cached (input-token savings; NOT a response cache).
+    body.system = [{ type: 'text', text: opts.system, cache_control: { type: 'ephemeral' } }];
+  }
   if (opts.schema) {
-    // JSON Schema for the tool input. Strip `$schema` — Anthropic wants a bare input_schema object.
     const jsonSchema = z.toJSONSchema(opts.schema) as Record<string, unknown>;
-    delete jsonSchema.$schema;
+    delete jsonSchema.$schema; // Anthropic wants a bare input_schema object
     body.tools = [
       {
         name: STRUCTURED_TOOL_NAME,
@@ -78,50 +213,295 @@ export async function callModel<T = string>(opts: CallOptions<T>): Promise<CallR
     ];
     body.tool_choice = { type: 'tool', name: STRUCTURED_TOOL_NAME }; // FORCE the tool — no free-text escape
   }
+  return body;
+}
 
-  const startedAt = Date.now();
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json',
+interface RoundTripUsage {
+  tokensIn: number;
+  tokensOut: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+function parseUsage(raw: ProviderRawResponse): RoundTripUsage {
+  const u = raw.usage ?? {};
+  return {
+    tokensIn: u.input_tokens ?? 0,
+    tokensOut: u.output_tokens ?? 0,
+    cacheReadTokens: u.cache_read_input_tokens ?? 0,
+    cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+  };
+}
+
+/** Cost of ONE round-trip, priced by the model that served it — so a mixed-model chain (Sonnet → Opus) is
+ *  priced correctly, and cache-read tokens bill at 0.1× (how "a cached prefix shows reduced input cost" shows up). */
+function priceRoundTrip(model: string, u: RoundTripUsage): number {
+  const p = PRICING[model];
+  if (!p) {
+    // Untracked cost is a silent failure (§11.7) — fail loud rather than bill $0 for an unpriced model.
+    throw new Error(`callModel: no pricing for model '${model}' — declare it in PRICING (no untracked cost).`);
+  }
+  return (
+    (u.tokensIn * p.inPerMtok +
+      u.cacheReadTokens * p.inPerMtok * CACHE_READ_MULT +
+      u.cacheWriteTokens * p.inPerMtok * CACHE_WRITE_MULT +
+      u.tokensOut * p.outPerMtok) /
+    1_000_000
+  );
+}
+
+/** Append one content-free repair turn naming the validation failure (field paths only — never prompt content). */
+function withRepairTurn<T>(base: CallOptions<T>['messages'], reason: string): CallOptions<T>['messages'] {
+  return [
+    ...base,
+    {
+      role: 'user',
+      content:
+        `Your previous response did not satisfy the required structure (${reason}). ` +
+        `Re-emit a corrected response by calling the ${STRUCTURED_TOOL_NAME} tool with valid fields.`,
     },
-    body: JSON.stringify(body),
-  });
-  const durationMs = Date.now() - startedAt;
+  ];
+}
 
+type Validation<T> = { ok: true; value: T } | { ok: false; reason: string };
+
+function validateStructured<T>(raw: ProviderRawResponse, schema: z.ZodType<T>): Validation<T> {
+  const block = (raw.content ?? []).find((b) => b.type === 'tool_use' && b.name === STRUCTURED_TOOL_NAME);
+  if (!block) return { ok: false, reason: `no ${STRUCTURED_TOOL_NAME} tool_use block` };
+  const parsed = schema.safeParse(block.input);
+  if (parsed.success) return { ok: true, value: parsed.data };
+  const summary = parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
+  return { ok: false, reason: summary };
+}
+
+function textOf(raw: ProviderRawResponse): string {
+  return (raw.content ?? [])
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text ?? '')
+    .join('');
+}
+
+/** The real transport: ONE Anthropic HTTP round-trip via direct fetch (no SDK → #46 stays green). Classifies
+ *  failures so the orchestrator can decide: abort 4xx fatally, retry/fallback 429/5xx/timeout. */
+const defaultTransport: Transport = async (req) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), req.timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(req.url, {
+      method: 'POST',
+      headers: req.headers,
+      body: JSON.stringify(req.body),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (controller.signal.aborted) {
+      throw new GatewayTransportError('timeout', `callModel: request timed out after ${req.timeoutMs}ms`);
+    }
+    throw new GatewayTransportError('transient', `callModel: network error (${String(e)})`);
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     // Surface status only — never the prompt/messages content (no content in errors/logs, §11.10).
     const detail = await res.text().catch(() => '');
-    throw new Error(`callModel failed: ${res.status} ${res.statusText} ${detail.slice(0, 200)}`);
+    // 429 (rate limit) + 5xx (incl. 529 overloaded) are transient/retryable; every other 4xx is fatal.
+    const kind: TransportErrorKind = res.status === 429 || res.status >= 500 ? 'transient' : 'fatal';
+    throw new GatewayTransportError(kind, `callModel failed: ${res.status} ${res.statusText} ${detail.slice(0, 200)}`);
   }
+  return (await res.json()) as ProviderRawResponse;
+};
 
-  const json = (await res.json()) as {
-    content?: Array<{ type: string; name?: string; text?: string; input?: unknown }>;
-    usage?: { input_tokens?: number; output_tokens?: number };
-  };
-  const usage: ModelUsage = {
-    model: GENERATION_MODEL,
-    durationMs,
-    ...(json.usage?.input_tokens !== undefined ? { tokensIn: json.usage.input_tokens } : {}),
-    ...(json.usage?.output_tokens !== undefined ? { tokensOut: json.usage.output_tokens } : {}),
-  };
-
-  if (opts.schema) {
-    const block = json.content?.find((b) => b.type === 'tool_use' && b.name === STRUCTURED_TOOL_NAME);
-    if (!block) {
-      throw new Error('callModel: forced tool-use returned no tool_use block (refusing to surface a malformed answer).');
-    }
-    // zod-validate the tool input — throws LOUD on any mismatch (the structural guarantee; #10 adds repair).
-    const output = opts.schema.parse(block.input);
-    return { output, usage };
-  }
-
-  // Plain-text path (no schema): concatenate text blocks. `T` is `string` here.
-  const text = (json.content ?? []).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('');
-  return { output: text as unknown as T, usage };
+/**
+ * The bound on TOTAL transport round-trips — the PRODUCT of the levers, not each alone (so total wall-cost can't
+ * blow up). validationAttempts = primary(initial + repairs) + one single-shot per fallback model; each attempt
+ * may incur up to (1 + retryCount) transient/timeout retries. Defaults: structured 3 × 3 = 9; plain 2 × 3 = 6.
+ */
+function maxTransportCalls(cfg: GatewayConfig, chainLen: number, structured: boolean): number {
+  const validationAttempts = structured ? 1 + cfg.repairAttempts + (chainLen - 1) : chainLen;
+  return validationAttempts * (1 + cfg.retryCount);
 }
+
+/**
+ * THE single chokepoint for generation (PRD §6.1) — extends the #5 minimal call with TaskClass routing across
+ * Anthropic tiers, a bounded fallback chain, bounded structured-output repair (the ⚠ audit fix), per-provider
+ * prompt caching, and aggregate cost + a trace span. Direct REST only, no provider SDK (#46). BYO key per client
+ * from env (fail loud if missing). Streaming is deferred to #54 — stream:true fails loud here.
+ *
+ * Fallback is NEVER silent: usage.model is the model that ACTUALLY answered and usage.fallback records the
+ * downgrade. Repair is bounded: 1 repair on the primary → escalate to the fallback (single shot) → throw LOUD.
+ * Fatal (4xx) short-circuits with no retry/fallback. Cost + the span AGGREGATE every round-trip, not just the
+ * answering call. An overall deadline caps total wall-time so it can't reach N × per-call timeout.
+ */
+export async function callModel<T = string>(opts: CallOptions<T>, deps: GatewayDeps = {}): Promise<CallResult<T>> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error('ANTHROPIC_API_KEY is not set — callModel cannot run (fail loud, never a silent empty answer).');
+  }
+  if (opts.stream) {
+    // No silent non-stream, and no un-traced streamed call — real streaming is deferred to #54.
+    throw new Error('callModel: streaming requested (stream:true) but deferred to #54 — #10 is non-streaming.');
+  }
+
+  const cfg = resolveConfig(deps.config);
+  const now = deps.now ?? Date.now;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const transport = deps.transport ?? defaultTransport;
+  const headers = anthropicHeaders(apiKey);
+
+  const structured = !!opts.schema;
+  const maxTokens = opts.maxTokens ?? cfg.maxTokens;
+  const chain = routeChain(opts.taskClass, structured);
+  const ceiling = maxTransportCalls(cfg, chain.length, structured);
+  const start = now();
+
+  // Aggregates across EVERY round-trip (failed primary + repair + fallback) — so cost is never under-reported.
+  let tokensIn = 0;
+  let tokensOut = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  let costUsd = 0;
+  let attempts = 0;
+
+  /** One transport call: bumps the counter, enforces the ceiling + the overall deadline, accumulates cost. */
+  const callOnce = async (model: string, messages: CallOptions<T>['messages']): Promise<ProviderRawResponse> => {
+    const elapsed = now() - start;
+    if (elapsed >= cfg.totalDeadlineMs) {
+      throw new GatewayTransportError('timeout', `callModel: total deadline ${cfg.totalDeadlineMs}ms exceeded`);
+    }
+    if (attempts >= ceiling) {
+      // Defensive backstop — the loop structure already bounds this; tripping it is a bug, surfaced loudly.
+      throw new Error(`callModel: exceeded the ${ceiling}-round-trip ceiling (bounded retry × repair × models).`);
+    }
+    attempts += 1;
+    const timeoutMs = Math.min(cfg.requestTimeoutMs, cfg.totalDeadlineMs - elapsed);
+    const body = buildAnthropicBody(opts, model, maxTokens, messages);
+    const raw = await transport({ url: ANTHROPIC_MESSAGES_URL, headers, body, model, timeoutMs });
+    const u = parseUsage(raw);
+    tokensIn += u.tokensIn;
+    tokensOut += u.tokensOut;
+    cacheReadTokens += u.cacheReadTokens;
+    cacheWriteTokens += u.cacheWriteTokens;
+    costUsd += priceRoundTrip(model, u); // priced by the serving model — correct across a mixed chain
+    return raw;
+  };
+
+  /** Transient/timeout retries on ONE model, with backoff. Fatal (4xx) rethrows immediately (no retry). */
+  const attemptModel = async (model: string, messages: CallOptions<T>['messages']): Promise<ProviderRawResponse> => {
+    let lastErr: unknown;
+    for (let r = 0; r <= cfg.retryCount; r++) {
+      try {
+        return await callOnce(model, messages);
+      } catch (e) {
+        if (e instanceof GatewayTransportError && e.kind === 'fatal') throw e; // short-circuit — no retry, no fallback
+        if (!(e instanceof GatewayTransportError)) throw e; // ceiling/deadline/programming error — surface it
+        lastErr = e;
+        if (r < cfg.retryCount) await sleep(cfg.retryBackoffMs * (r + 1));
+      }
+    }
+    throw lastErr; // transient/timeout exhausted on this model
+  };
+
+  let answering: string = chain[0]; // readonly [string, string] — index 0 always present
+  let output: T | undefined;
+  let succeeded = false;
+  let fallbackInfo: ModelUsage['fallback'];
+  let lastReason = '';
+
+  // Walk the chain. The PRIMARY gets up to `repairAttempts` structured repairs; later models get a single shot.
+  chainLoop: for (let mi = 0; mi < chain.length; mi++) {
+    const model = chain[mi]!; // bounded by chain.length
+    const repairsAllowed = mi === 0 && structured ? cfg.repairAttempts : 0;
+    let messages = opts.messages;
+
+    for (let rep = 0; rep <= repairsAllowed; rep++) {
+      let raw: ProviderRawResponse;
+      try {
+        raw = await attemptModel(model, messages);
+      } catch (e) {
+        if (e instanceof GatewayTransportError && e.kind === 'fatal') {
+          // A bad key / wrong model id fails identically on any model — surface it, never mask with a fallback.
+          answering = model;
+          lastReason = e.message;
+          break chainLoop;
+        }
+        // transient/timeout exhausted on this model → advance to the fallback (recording the downgrade reason)
+        const reason: 'timeout' | 'transient' =
+          e instanceof GatewayTransportError && e.kind === 'timeout' ? 'timeout' : 'transient';
+        lastReason = e instanceof Error ? e.message : String(e);
+        if (mi < chain.length - 1) fallbackInfo = { from: model, reason };
+        continue chainLoop;
+      }
+
+      if (!structured) {
+        answering = model;
+        output = textOf(raw) as unknown as T;
+        succeeded = true;
+        break chainLoop;
+      }
+
+      const v = validateStructured(raw, opts.schema!);
+      if (v.ok) {
+        answering = model;
+        output = v.value;
+        succeeded = true;
+        break chainLoop;
+      }
+      lastReason = v.reason;
+      if (rep < repairsAllowed) {
+        messages = withRepairTurn(opts.messages, v.reason); // ONE bounded repair on the same (primary) model
+        continue;
+      }
+      // repairs exhausted on this model → escalate to the fallback (a validation downgrade, recorded)
+      if (mi < chain.length - 1) fallbackInfo = { from: model, reason: 'validation' };
+      continue chainLoop;
+    }
+  }
+
+  const durationMs = now() - start;
+  const usage: ModelUsage = {
+    model: answering,
+    durationMs,
+    attempts,
+    ...(tokensIn ? { tokensIn } : {}),
+    ...(tokensOut ? { tokensOut } : {}),
+    ...(cacheReadTokens ? { cacheReadTokens } : {}),
+    ...(cacheWriteTokens ? { cacheWriteTokens } : {}),
+    costUsd,
+    ...(succeeded && fallbackInfo ? { fallback: fallbackInfo } : {}),
+  };
+
+  // Every call records a span — even a total failure (the spend is real, and the failure must be alertable).
+  if (deps.onSpan) {
+    deps.onSpan({
+      model: answering,
+      taskClass: opts.taskClass,
+      structured,
+      ok: succeeded,
+      durationMs,
+      attempts,
+      costUsd,
+      ...(tokensIn ? { tokensIn } : {}),
+      ...(tokensOut ? { tokensOut } : {}),
+      ...(cacheReadTokens ? { cacheReadTokens } : {}),
+      ...(cacheWriteTokens ? { cacheWriteTokens } : {}),
+      ...(succeeded && fallbackInfo ? { fallback: fallbackInfo } : {}),
+    });
+  }
+
+  if (!succeeded) {
+    // LOUD — never surface a malformed/empty answer. The aggregate spend is already on the span above.
+    throw new Error(
+      `callModel: exhausted ${chain.length} model(s) for taskClass=${opts.taskClass} after ${attempts} round-trip(s) ` +
+        `(last: ${lastReason}) — refusing to surface a malformed/empty answer.`,
+    );
+  }
+
+  return { output: output as T, usage };
+}
+
+/** The cheap synthesis tier id, kept exported for callers/tests that reference the Haiku pin by name. */
+export const GENERATION_MODEL = HAIKU_MODEL;
 
 /**
  * Embeddings are pinned to ONE model+version and NEVER cost-routed (§4.7). This is the FIRST real provider
@@ -187,13 +567,8 @@ export async function embed(texts: string[]): Promise<number[][]> {
 // ❗ Changing the model OR the dim later = re-embed every existing client's corpus + re-derive the floor.
 //    While "0-provisional" and no client data exists, that cost is ~zero — which is exactly why we defer.
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-// GENERATION MODEL — the M0 minimal `callModel` pin. Generation is Claude-first (Brief §12); embeddings stay
-// pinned to OpenAI (above). So #10 adds the TaskClass routing table ON Anthropic, not a provider swap. Haiku
-// 4.5 is the cheap synthesis tier; #10 routes stronger tiers (Sonnet/Opus) for harder TaskClasses.
-// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-export const GENERATION_MODEL = 'claude-haiku-4-5-20251001'; // Haiku 4.5 — cheap synthesis; #10 adds routing
-
+// NOTE: generation model tiers (Haiku/Sonnet/Opus), the routing MAP, and pricing live next to `callModel`
+// above (#10). Embeddings stay pinned to OpenAI and are NEVER routed (#1) — out of scope for the generation path.
 export const EMBEDDING_MODEL = 'text-embedding-3-large'; // PROVISIONAL (#1) — real pin deferred to #43
 export const EMBEDDING_DIM = 1024; // → vector(1024) + HNSW in #2; one-way door once a corpus is embedded
 export const EMBEDDING_DTYPE = 'float' as const; // un-quantized v0; int8/binary trade decided in #3
