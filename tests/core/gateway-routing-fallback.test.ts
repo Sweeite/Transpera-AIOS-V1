@@ -164,6 +164,40 @@ describe('callModel() bounded repair — the ⚠ audit fix (#10)', () => {
     expect(usage.fallback).toBeUndefined();
     expect(calls.map((c) => c.model)).toEqual([SONNET_MODEL, SONNET_MODEL]); // primary twice, no Opus
   });
+
+  it('a 2nd repair CHAINS context — each repair turn is appended, not replaced (repairAttempts=2)', async () => {
+    // Review fix: withRepairTurn must build from the CURRENT messages so repair#2 carries repair#1's turn too.
+    const { transport, calls } = fakeTransport((_m, callNo) => (callNo < 2 ? malformed() : okStructured('ok')));
+    await callModel(
+      { taskClass: 'synthesize', schema: Schema, messages: [{ role: 'user', content: 'q' }] },
+      { transport, config: { retryCount: 0, repairAttempts: 2, ...FAST } },
+    );
+    expect(calls.map((c) => c.model)).toEqual([SONNET_MODEL, SONNET_MODEL, SONNET_MODEL]); // 3 on primary, no fallback
+    expect(calls[2].messages.length).toBe(calls[0].messages.length + 2); // BOTH prior repair turns chained
+  });
+});
+
+describe('callModel() an empty completion is NOT a silent answer (#10 review fix, §3.2)', () => {
+  it('a non-structured EMPTY/whitespace completion falls back, never returns "" as success', async () => {
+    const { transport, calls } = fakeTransport((model) =>
+      model === GENERATION_MODEL ? okText('   ') : okText('real answer'),
+    );
+    const { output, usage } = await callModel(
+      { taskClass: 'summarise', messages: [{ role: 'user', content: 'q' }] }, // Haiku-primary, Sonnet fallback
+      { transport, config: { retryCount: 0, ...FAST } },
+    );
+    expect(output).toBe('real answer');
+    expect(usage.model).toBe(SONNET_MODEL);
+    expect(usage.fallback).toMatchObject({ from: GENERATION_MODEL });
+    expect(calls.map((c) => c.model)).toEqual([GENERATION_MODEL, SONNET_MODEL]);
+  });
+
+  it('an all-empty chain throws LOUD — never silently returns ""', async () => {
+    const { transport } = fakeTransport(() => okText(''));
+    await expect(
+      callModel({ taskClass: 'summarise', messages: [{ role: 'user', content: 'q' }] }, { transport, config: { retryCount: 0, ...FAST } }),
+    ).rejects.toThrow(/exhausted/i);
+  });
 });
 
 describe('callModel() fatal (4xx) short-circuits — surface, never mask (#10 gap 2)', () => {

@@ -434,8 +434,16 @@ export async function callModel<T = string>(opts: CallOptions<T>, deps: GatewayD
       }
 
       if (!structured) {
+        const text = textOf(raw);
+        if (text.trim() === '') {
+          // No silent empty answer (red line, §3.2): an empty completion is NOT a valid answer. Escalate like a
+          // validation failure (non-structured gets no repair) → fallback, and a dry chain throws loud below.
+          lastReason = 'empty text completion';
+          if (mi < chain.length - 1) fallbackInfo = { from: model, reason: 'validation' };
+          continue chainLoop;
+        }
         answering = model;
-        output = textOf(raw) as unknown as T;
+        output = text as unknown as T;
         succeeded = true;
         break chainLoop;
       }
@@ -449,7 +457,9 @@ export async function callModel<T = string>(opts: CallOptions<T>, deps: GatewayD
       }
       lastReason = v.reason;
       if (rep < repairsAllowed) {
-        messages = withRepairTurn(opts.messages, v.reason); // ONE bounded repair on the same (primary) model
+        // Bounded repair on the same (primary) model. Chain from the CURRENT messages (not opts.messages) so a
+        // 2nd repair appends to the 1st — the model sees every prior failure, not just the latest (config max 2).
+        messages = withRepairTurn(messages, v.reason);
         continue;
       }
       // repairs exhausted on this model → escalate to the fallback (a validation downgrade, recorded)
