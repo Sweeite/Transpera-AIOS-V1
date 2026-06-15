@@ -8,7 +8,7 @@
  * app-level pre-SELECT is defeated (exactly the race window #3 left open).
  */
 import { describe, it, expect } from 'vitest';
-import { freshDb, synthVector, vec, type Query } from './helpers/pglite.ts';
+import { freshDb, synthVector, vec, pgliteTx, type Query } from './helpers/pglite.ts';
 import { writeMemory, type WriteMemoryInput } from '../../packages/core/src/memory/store.ts';
 import { EMBEDDING_MODEL, EMBEDDING_VERSION } from '../../packages/core/src/harness/gateway.ts';
 
@@ -79,6 +79,59 @@ describe('#3 dedup guard closed at the DB level (#7)', () => {
     expect(second.deduped).toBe(true); // resolved via ON CONFLICT → re-read, not the fast path
     expect(second.memory.id).toBe(first.memory.id); // it really is the winner's row
     expect(await activeCount(query, 'org')).toBe(1); // the DB held the line
+  });
+
+  // ── #12 LEAK FIXTURE (#36-class) — the #3 obligation: a MORE-restrictive re-upload must RAISE the stored
+  //    label, not silently keep the permissive one. The fix is invalidate-old + write-new at max sensitivity
+  //    (§5 max-of-sources + §4.4 invalidate-don't-overwrite), proven here end-to-end through the txn runner. ──
+  it('LEAK FIX: a more-restrictive (same-zone, higher-sensitivity) re-upload RELABELS — invalidate-old + write-new at max', async () => {
+    const { db, query } = await freshDb();
+
+    // Stored permissively at s1.
+    const first = await writeMemory(query, baseInput({ sensitivityLevel: 1 }), { embed });
+    expect(first.deduped).toBe(false);
+    expect(first.memory.sensitivityLevel).toBe(1);
+
+    // Re-upload of identical content demanding s4 → the restriction MUST now be applied (not just flagged).
+    const hotter = await writeMemory(query, baseInput({ sensitivityLevel: 4 }), { embed, transaction: pgliteTx(db) });
+    expect(hotter.deduped).toBe(true);
+    expect(hotter.relabeled).toBe(true);
+    expect(hotter.labelConflict).toBe(false); // resolved, not merely surfaced
+    expect(hotter.memory.id).not.toBe(first.memory.id); // a NEW active row, not an in-place overwrite
+    expect(hotter.memory.sensitivityLevel).toBe(4); // the wall was RAISED — the over-share is closed
+
+    // The old permissive row is invalidated (preserved as history), exactly one active row remains, at s4.
+    const oldRow = (await query(`SELECT status, sensitivity_level FROM memories WHERE id=$1`, [first.memory.id])).rows[0];
+    expect(oldRow.status).toBe('invalidated');
+    expect(oldRow.sensitivity_level).toBe(1); // history is verbatim — the OLD label is never mutated
+    expect(await activeCount(query, 'org')).toBe(1);
+    const active = (await query(`SELECT sensitivity_level FROM memories WHERE namespace='org' AND status='active'`)).rows[0];
+    expect(active.sensitivity_level).toBe(4);
+
+    // The successor carries a supersedes edge back to the invalidated row.
+    const edge = (await query(`SELECT from_id, to_id FROM memory_links WHERE kind='supersedes'`)).rows[0];
+    expect(edge.from_id).toBe(hotter.memory.id);
+    expect(edge.to_id).toBe(first.memory.id);
+  });
+
+  it('relabel NEVER downgrades trust: the successor keeps the STORED provenance, not the (identical-content) re-upload’s', async () => {
+    const { db, query } = await freshDb();
+    // Original is HIGH trust (gates semantic promotion). A LOW-trust re-upload of the same text must not be
+    // allowed to pull the stored trust down under the guise of a relabel — incoming is corroboration, not a swap.
+    const first = await writeMemory(
+      query,
+      baseInput({ sensitivityLevel: 1, provenance: { sourceRefs: ['ref:trusted'], capturedAt: '2026-06-14T00:00:00Z', trustLevel: 'high' } }),
+      { embed },
+    );
+    const hotter = await writeMemory(
+      query,
+      baseInput({ sensitivityLevel: 4, provenance: { sourceRefs: ['ref:sketchy'], capturedAt: '2026-06-14T00:00:00Z', trustLevel: 'low' } }),
+      { embed, transaction: pgliteTx(db) },
+    );
+    expect(hotter.relabeled).toBe(true);
+    const prov = (await query(`SELECT provenance FROM memories WHERE id=$1`, [hotter.memory.id])).rows[0].provenance;
+    const p = typeof prov === 'string' ? JSON.parse(prov) : prov;
+    expect(p.trustLevel).toBe('high'); // trust preserved — never silently downgraded on relabel
   });
 
   it('an INVALIDATED row does NOT block a new active row with the same hash (the index is partial, §4.4)', async () => {

@@ -94,8 +94,9 @@ export interface AppendAuditOpts {
 // The single fixed advisory-lock key for the (global, single) audit chain — all appenders contend on it.
 const AUDIT_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtext('aios:audit_log')::bigint)`;
 
-/** Vitest/Node test runner detection — the only context where the unlocked append path is tolerated. */
-function underTestRunner(): boolean {
+/** Vitest/Node test runner detection — the only context where an unlocked append path is tolerated. Exported
+ *  so sibling atomic writers (#12 invalidate/supersede) apply the IDENTICAL prod-requires-a-txn policy. */
+export function underTestRunner(): boolean {
   return !!process.env.VITEST || process.env.NODE_ENV === 'test';
 }
 
@@ -138,6 +139,20 @@ export async function appendAudit(query: QueryFn, entry: AuditEntry, opts: Appen
     );
   }
   return appendWith(query, entry);
+}
+
+/**
+ * Append one audit row WITHIN a transaction the caller already opened — for a writer that must commit a memory
+ * mutation and its audit row as ONE atomic unit (#12 invalidate/supersede). Takes the advisory lock ONCE on the
+ * SAME connection `q`, then appends. The mutation + this row share the caller's txn, so they commit/roll back
+ * together (a mutation can't land without its audit, and vice versa — no silent failure, no forked chain).
+ *
+ * ⚠ Do NOT call the public `appendAudit({transaction})` from inside another transaction: that opens a nested
+ *   BEGIN and re-acquires the lock re-entrantly. This is the in-txn entry point — use it instead.
+ */
+export async function appendAuditInTx(q: QueryFn, entry: AuditEntry): Promise<AuditWriteResult> {
+  await q(AUDIT_LOCK_SQL); // serialise read-head+insert on the caller's backend — released at the caller's commit
+  return appendWith(q, entry);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────

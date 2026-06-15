@@ -47,6 +47,18 @@ export type Namespace = 'org' | `client:${string}` | `project:${string}`;
 export type MemoryType = 'working' | 'episodic' | 'semantic' | 'procedural';
 export type MemoryStatus = 'active' | 'invalidated';
 
+/**
+ * Why a memory was invalidated/superseded (§4.4). A CLOSED vocab so the audit chain records the WHY as a
+ * refs-only scalar (§11.10) — the free-text human note (if any) lands on `memories.invalidated_reason`, the
+ * permission-tagged column, NEVER in the content-free audit log. Lives in shared because the wrong→invalidate
+ * feedback path (Feedback.kind='down_wrong', §4.6) will call invalidate from api/worker, not just core.
+ */
+export type InvalidationCode =
+  | 'relabel_restrictive_reupload' // a more-restrictive re-upload raised the access label (§5 max-of-sources)
+  | 'feedback_wrong' // a 👎 "this is wrong" (§4.6) — invalidate, NOT decay
+  | 'consolidation_contradicts' // consolidation found a contradicting newer fact (#30)
+  | 'manual'; // an operator/admin action
+
 /** Optional structured slot for deterministic supersession/dedup (§4.5). Free-text facts omit it. */
 export interface MemorySlot {
   entityRef: string; // canonical entity id (§4.10 Identity Map)
