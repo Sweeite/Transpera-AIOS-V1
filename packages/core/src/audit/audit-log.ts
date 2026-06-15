@@ -29,6 +29,7 @@
  *   actual race is proven on the real-PG lane (#51 / SUPABASE_DB_URL) — pglite is single-threaded.
  */
 import { createHash } from 'node:crypto';
+import { asObject } from '../db/jsonb.js';
 
 /** Minimal DB executor — matches both pglite (tests) and the real pooled connection (same shape as RBAC). */
 export type QueryFn = (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
@@ -162,20 +163,9 @@ interface ChainRow {
   hash_input: string | null;
 }
 
-/** A jsonb column arrives as a parsed object on some drivers (pglite) but as a RAW STRING on others
- *  (postgres.js) — the pglite≠Supabase divergence. Normalise to an object so canonicalisation/reads match the
- *  shape that was written, regardless of driver. */
-function asObject(value: unknown): Record<string, unknown> {
-  if (value == null) return {};
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value) as Record<string, unknown>;
-    } catch {
-      return {};
-    }
-  }
-  return value as Record<string, unknown>;
-}
+// jsonb driver-divergence normaliser (asObject) now lives in db/jsonb.ts — one source of truth shared with
+// system-config.ts (#55). verifyChain reconstructs canonical from the live metadata column, so it must read the
+// SAME normalised object shape that was written, regardless of driver.
 
 function entryOf(row: ChainRow): AuditEntry {
   return {

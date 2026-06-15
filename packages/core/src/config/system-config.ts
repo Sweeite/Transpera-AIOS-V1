@@ -4,6 +4,7 @@
  */
 import type { Namespace } from '@aios/shared';
 import { appendAudit, type QueryFn, type TxFn } from '../audit/audit-log.js';
+import { asConfigValue, asObject } from '../db/jsonb.js';
 
 export interface ConfigKeySpec {
   key: string;
@@ -180,8 +181,11 @@ export async function getConfig(
   deps: ConfigDeps,
 ): Promise<number | string> {
   const spec = specFor(key, deps.keys ?? KNOWN_KEYS);
-  const stored = await resolveStored(deps.query, key, normNs(namespace));
-  if (stored === undefined) return spec.default; // no row ⇒ declared default (in-bounds by construction)
+  const storedRaw = await resolveStored(deps.query, key, normNs(namespace));
+  if (storedRaw === undefined) return spec.default; // no row ⇒ declared default (in-bounds by construction)
+  // Normalise the scalar jsonb to its JS value using the DECLARED type — postgres.js hands back raw text under
+  // prepare:false (#55); without this every stored override would mis-type → false anomaly → silent fall-back.
+  const stored = asConfigValue(storedRaw, typeof spec.default as 'number' | 'string');
 
   const onAnomaly = deps.onAnomaly ?? defaultOnAnomaly;
   if (typeof spec.default === 'number') {
@@ -305,7 +309,9 @@ export async function approveConfigChange(
   if (p.status !== 'pending') throw new Error(`config proposal ${proposalId} is '${p.status}', not pending`);
 
   const spec = specFor(p.key, deps.keys ?? KNOWN_KEYS);
-  const value = p.proposed_value as number | string;
+  // proposed_value is scalar jsonb — normalise by declared type (postgres.js raw-text divergence, #55) BEFORE
+  // re-validation, else a numeric key arrives as the string "0.608" and validateWrite wrongly rejects it.
+  const value = asConfigValue(p.proposed_value, typeof spec.default as 'number' | 'string') as number | string;
   validateWrite(spec, value); // re-validate at APPLY — bounds can tighten while a proposal sits pending
   const ns: string | null = p.namespace ?? null;
   const old = await getConfig(p.key, (ns ?? undefined) as Namespace | undefined, deps);
@@ -337,6 +343,10 @@ export async function rejectConfigChange(
   if (rows.length === 0) throw new Error(`config proposal ${proposalId} not found`);
   const p = rows[0];
   if (p.status !== 'pending') throw new Error(`config proposal ${proposalId} is '${p.status}', not pending`);
+  // Normalise the scalar jsonb so the audit records the proposed VALUE (0.608), not postgres.js' raw text
+  // ('"0.608"') under prepare:false (#55). The proposal only exists for a declared key, so specFor is safe.
+  const spec = specFor(p.key, deps.keys ?? KNOWN_KEYS);
+  const proposed = asConfigValue(p.proposed_value, typeof spec.default as 'number' | 'string');
   await deps.query(
     `UPDATE config_proposals SET status = 'rejected', resolved_at = now(), resolved_by = $2 WHERE id = $1`,
     [proposalId, opts.rejecter ?? null],
@@ -345,7 +355,7 @@ export async function rejectConfigChange(
     actor: opts.rejecter ?? null,
     action: 'config.rejected',
     targetRef: targetRef(p.key, p.namespace ?? null),
-    metadata: { key: p.key, namespace: p.namespace ?? null, proposed: p.proposed_value, proposalId },
+    metadata: { key: p.key, namespace: p.namespace ?? null, proposed, proposalId },
   }, { transaction: deps.transaction });
 }
 
@@ -372,7 +382,9 @@ export async function rollbackConfig(
         `never-applied value)`,
     );
   }
-  const meta = (entry.metadata ?? {}) as Record<string, unknown>;
+  // metadata is OBJECT jsonb — postgres.js returns it as raw text under prepare:false (#55), so meta.key/old
+  // would be undefined without normalising. asObject parses it back; nested scalars (meta.old) come through typed.
+  const meta = asObject(entry.metadata);
   const key = meta.key;
   const ns: string | null = (meta.namespace as string | null) ?? null;
   const restore = meta.old;
