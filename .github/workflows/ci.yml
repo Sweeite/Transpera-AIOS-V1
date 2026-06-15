@@ -81,6 +81,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build # @aios/shared dist (type-only at runtime today, but future-proof + cheap)
-      # Run ONLY the real-Postgres-gated files; the hermetic job already ran the full pglite suite. Passing
-      # explicit paths overrides the config's include glob.
-      - run: pnpm exec vitest run tests/core/supabase-migration.real.test.ts tests/core/engine-boot.real.test.ts
+      # Run ALL real-Postgres-gated files via a GLOB — never a hand-maintained list, or a new *.real.test.ts
+      # silently escapes CI (it happened: #11's audit-concurrency/-float-roundtrip were added but not gated).
+      # Each *.real.test.ts self-gates on its own env (skipIf), so a key-gated one still skips here (DB only).
+      - run: pnpm exec vitest run tests/core/*.real.test.ts
