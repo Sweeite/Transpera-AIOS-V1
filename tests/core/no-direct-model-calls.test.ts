@@ -3,26 +3,25 @@
  *
  * EVERY model/provider call must flow through `packages/core/src/harness/gateway.ts`. A rogue `import Anthropic`
  * — OR a raw `fetch('https://api.anthropic.com/…')` — anywhere else means untracked cost + untraced calls: a
- * silent failure of the observability layer itself. This walks the real source tree and FAILS on any leak.
+ * silent failure of the observability layer itself. This walks the REAL source tree and FAILS on any leak.
  *
- * Two leak shapes are caught:
- *   1. importing a provider SDK,
- *   2. a raw provider REST host literal (the gateway uses fetch, so an SDK ban alone isn't enough).
- * Scope: packages/​**​/src/**.ts, excluding the gateway itself, node_modules, dist, and *.test.ts.
+ * The detection logic lives in a PURE function (./detect-direct-model-calls) so it can be unit-tested against
+ * known-BAD snippets — see detect-direct-model-calls.test.ts. That separation is the point of the #46 audit
+ * fix: walking the (clean) tree alone would stay green even if the detector silently rotted to a no-op (the
+ * M0 green-stub failure mode). The unit suite proves the guard guards; this file proves the real tree is clean.
+ *
+ * Scope: packages/​**​/src/**.ts, excluding the gateway itself, node_modules, dist, *.test.ts, *.d.ts.
+ * Watch (#46): the forbidden lists live in ./detect-direct-model-calls — keep them updated as providers are added.
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { detectDirectModelCalls } from './detect-direct-model-calls';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const PACKAGES_DIR = join(ROOT, 'packages');
 
 const GATEWAY = join('packages', 'core', 'src', 'harness', 'gateway.ts');
-
-// Provider SDKs that must never be imported outside the gateway.
-const FORBIDDEN_IMPORTS = ['@anthropic-ai/sdk', 'openai', '@google/generative-ai', 'cohere-ai', 'voyageai'];
-// Raw provider REST hosts — the gateway speaks fetch, so a banned host literal elsewhere is also a leak.
-const FORBIDDEN_HOSTS = ['api.openai.com', 'api.anthropic.com', 'generativelanguage.googleapis.com', 'api.voyageai.com', 'api.cohere.com'];
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -35,13 +34,6 @@ function walk(dir: string): string[] {
   return out;
 }
 
-function importsAny(src: string, specifiers: string[]): string[] {
-  return specifiers.filter((s) => {
-    const re = new RegExp(`(import|require)\\s*[^;\\n]*['"]${s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`);
-    return re.test(src);
-  });
-}
-
 describe('gateway chokepoint (#46)', () => {
   const files = walk(PACKAGES_DIR);
 
@@ -50,24 +42,15 @@ describe('gateway chokepoint (#46)', () => {
     expect(files.some((f) => f.endsWith(join('harness', 'gateway.ts')))).toBe(true);
   });
 
-  it('no provider SDK is imported outside the gateway', () => {
+  it('no provider SDK or raw REST host is referenced outside the gateway', () => {
     const violations: string[] = [];
     for (const file of files) {
       if (file.endsWith(GATEWAY)) continue; // the ONE allowed place
-      const hits = importsAny(readFileSync(file, 'utf8'), FORBIDDEN_IMPORTS);
-      if (hits.length) violations.push(`${file.replace(ROOT + '/', '')} imports ${hits.join(', ')}`);
+      const hits = detectDirectModelCalls(readFileSync(file, 'utf8'));
+      for (const v of hits) {
+        violations.push(`${file.replace(ROOT + '/', '')} — ${v.kind === 'import' ? 'imports' : 'references host'} ${v.specifier}`);
+      }
     }
-    expect(violations, `provider SDK imported outside the gateway:\n${violations.join('\n')}`).toEqual([]);
-  });
-
-  it('no raw provider REST host is referenced outside the gateway', () => {
-    const violations: string[] = [];
-    for (const file of files) {
-      if (file.endsWith(GATEWAY)) continue;
-      const src = readFileSync(file, 'utf8');
-      const hits = FORBIDDEN_HOSTS.filter((h) => src.includes(h));
-      if (hits.length) violations.push(`${file.replace(ROOT + '/', '')} references ${hits.join(', ')}`);
-    }
-    expect(violations, `raw provider host referenced outside the gateway:\n${violations.join('\n')}`).toEqual([]);
+    expect(violations, `direct provider access outside the gateway:\n${violations.join('\n')}`).toEqual([]);
   });
 });
