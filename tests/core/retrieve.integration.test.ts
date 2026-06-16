@@ -18,6 +18,7 @@ import { freshDb } from './helpers/pglite.ts';
 import { retrieve } from '../../packages/core/src/harness/retrieval.ts';
 import { ingestSop } from '../../packages/core/src/memory/store.ts';
 import { defaultFor } from '../../packages/core/src/config/system-config.ts';
+import { grantAll } from './helpers/grant.ts';
 
 const hasKey = !!process.env.OPENAI_API_KEY;
 const FLOOR = defaultFor('retrieval_min_relevance') as number;
@@ -31,9 +32,9 @@ describe.skipIf(!hasKey)('retrieve() against the real provisional embedding spac
     await ingestSop(query, { namespace: 'org', statement: SOP, sourceRef: 'upload://sop/onboarding.pdf' });
 
     // Same meaning, different words — the semantic win synthetic vectors cannot model.
-    const paraphrase = await retrieve('How do we set up a brand-new customer so we can get started with them?', { query });
+    const paraphrase = await retrieve('How do we set up a brand-new customer so we can get started with them?', { query, ...grantAll() });
     // Unrelated to anything in the corpus — must abstain.
-    const offTopic = await retrieve('What time does the moon rise over Lisbon next Tuesday?', { query });
+    const offTopic = await retrieve('What time does the moon rise over Lisbon next Tuesday?', { query, ...grantAll() });
 
     // Report the actual scores so a borderline provisional floor is a visible #43 data point (note B).
     console.info(

@@ -20,6 +20,7 @@ import {
   type WriteMemoryInput,
 } from '../../packages/core/src/memory/store.ts';
 import { retrieve } from '../../packages/core/src/harness/retrieval.ts';
+import { grantAll } from './helpers/grant.ts';
 
 const embed = async (texts: string[]) => texts.map((t) => synthVector(t));
 
@@ -159,17 +160,18 @@ describe('supersede() primitive (#12 — reused by #30)', () => {
 });
 
 describe('retrieve() filters to the live set — status=active is a BASE conjunct, independent of the #13 predicate', () => {
-  it('an invalidated fact NEVER returns, even with predicate=true (proves the conjunct is not the swappable seam)', async () => {
+  it('an invalidated fact NEVER returns, even under a granting clearance (proves the conjunct is not the swappable seam)', async () => {
     const { db, query } = await freshDb();
     const w = await writeMemory(query, baseInput({ statement: 'we use vendor Acme' }), { embed });
 
-    // Sanity: it's retrievable while active (exact-match query → cosine 1.0, clears any floor).
-    const before = await retrieve('we use vendor Acme', { query, embed, predicate: 'true', floor: 0.5 });
+    // Sanity: it's retrievable while active (exact-match query → cosine 1.0, clears any floor). The clearance
+    // GRANTS access — so what hides the row after invalidation is the status='active' BASE conjunct, not the seam.
+    const before = await retrieve('we use vendor Acme', { query, embed, floor: 0.5, ...grantAll() });
     expect(before.memories.map((m) => m.id)).toContain(w.memory.id);
 
     await invalidate(query, w.memory.id, { code: 'manual' }, { transaction: pgliteTx(db) });
 
-    const after = await retrieve('we use vendor Acme', { query, embed, predicate: 'true', floor: 0.5 });
+    const after = await retrieve('we use vendor Acme', { query, embed, floor: 0.5, ...grantAll() });
     expect(after.memories.map((m) => m.id)).not.toContain(w.memory.id);
     expect(after.abstained).toBe(true); // nothing else active → honest abstention, not a below-floor reach
   });

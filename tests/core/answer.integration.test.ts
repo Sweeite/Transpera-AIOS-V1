@@ -18,6 +18,7 @@ import type { CallOptions, CallResult } from '../../packages/core/src/harness/ga
 import { ingestSop } from '../../packages/core/src/memory/store.ts';
 import { answerQuestion, type ModelCaller } from '../../packages/core/src/harness/synthesis.ts';
 import { renderAnswer, ABSTENTION_COPY } from '../../packages/core/src/harness/provenance.ts';
+import { grantAll } from './helpers/grant.ts';
 
 const SOP = 'To onboard a new client: create the workspace, invite the team, and book the kickoff.';
 
@@ -63,7 +64,7 @@ describe('answerQuestion() acceptance (#5 — THE DEMO)', () => {
       calls,
     );
 
-    const { answer, retrieval } = await answerQuestion(SOP, { query, embed, callModel });
+    const { answer, retrieval } = await answerQuestion(SOP, { query, embed, callModel, ...grantAll() });
 
     expect(answer.abstained).toBe(false);
     expect(answer.claims).toHaveLength(1);
@@ -90,7 +91,7 @@ describe('answerQuestion() acceptance (#5 — THE DEMO)', () => {
       { text: 'Invoices are due in 7 days.', sourceId: 'mem-FABRICATED-not-retrieved' }, // a lie
     ]);
 
-    const { answer } = await answerQuestion(SOP, { query, embed, callModel, onFabricatedCitation: (i) => signals.push(i) });
+    const { answer } = await answerQuestion(SOP, { query, embed, callModel, onFabricatedCitation: (i) => signals.push(i), ...grantAll() });
 
     const claim = answer.claims[0]!;
     expect(claim.label).toBe('general-inference'); // NEVER surfaced as "I know this"
@@ -112,6 +113,7 @@ describe('answerQuestion() acceptance (#5 — THE DEMO)', () => {
       query,
       embed,
       callModel,
+      ...grantAll(),
     });
 
     expect(answer.abstained).toBe(true);

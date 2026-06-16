@@ -35,6 +35,7 @@ export const KNOWN_KEYS: ConfigKeySpec[] = [
   // ── added in audit remediation (config IS correctness, §4.8 — no undeclared thresholds) ──
   { key: 'rrf_k', default: 60, min: 1, max: 100, qualityAffecting: true }, // RRF 1/(k+rank) constant (#13)
   { key: 'exact_search_max_rows', default: 5000, min: 100, max: 50000, qualityAffecting: true }, // selectivity switch: ≤ this → exact, else HNSW (#13)
+  { key: 'hnsw_ef_search', default: 100, min: 10, max: 1000, qualityAffecting: true }, // HNSW candidate-pool size on the non-selective path (#13); pairs with iterative_scan for filtered recall
   { key: 'entity_resolution_min_confidence', default: 0.75, min: 0.5, max: 0.99, qualityAffecting: true }, // below → abstain, never guess the entity (#16, leak risk)
   { key: 'gate3_preclassifier_threshold', default: 0.5, min: 0, max: 1, qualityAffecting: true }, // cheap classifier: below → send to LLM, not auto-drop (#17)
   { key: 'corroboration_similarity_threshold', default: 0.9, min: 0.7, max: 0.99, qualityAffecting: true }, // two low-trust sources corroborate above this (#18)

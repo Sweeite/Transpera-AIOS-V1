@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest';
 import { freshDb } from './helpers/pglite.ts';
 import { ingestSop } from '../../packages/core/src/memory/store.ts';
 import { answerQuestion } from '../../packages/core/src/harness/synthesis.ts';
+import { grantAll } from './helpers/grant.ts';
 
 const HAVE_KEYS = !!process.env.OPENAI_API_KEY && !!process.env.ANTHROPIC_API_KEY;
 const SOP =
@@ -25,7 +26,7 @@ describe.skipIf(!HAVE_KEYS)('answerQuestion() real-LLM end-to-end (#5, key-gated
     // Real pinned embeddings (opts {} → gateway.embed); real synthesis (no callModel injected → gateway.callModel).
     await ingestSop(query, { namespace: 'org', statement: SOP, sourceRef: 'upload://sop/onboarding.pdf', capturedAt: '2026-02-01T00:00:00.000Z' });
 
-    const { answer, retrieval } = await answerQuestion('What are the steps to onboard a new client?', { query });
+    const { answer, retrieval } = await answerQuestion('What are the steps to onboard a new client?', { query, ...grantAll() });
 
     expect(answer.abstained).toBe(false);
     const retrievedIds = new Set(retrieval.memories.map((m) => m.id));
@@ -39,7 +40,7 @@ describe.skipIf(!HAVE_KEYS)('answerQuestion() real-LLM end-to-end (#5, key-gated
     const { query } = await freshDb();
     await ingestSop(query, { namespace: 'org', statement: SOP, sourceRef: 'upload://sop/onboarding.pdf' });
 
-    const { answer } = await answerQuestion('what is the airspeed velocity of an unladen swallow', { query });
+    const { answer } = await answerQuestion('what is the airspeed velocity of an unladen swallow', { query, ...grantAll() });
     expect(answer.abstained).toBe(true);
     expect(answer.claims).toEqual([]);
   }, 30_000);

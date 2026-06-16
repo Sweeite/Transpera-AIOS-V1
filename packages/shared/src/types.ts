@@ -17,6 +17,7 @@ export type SensitivityLevel = 1 | 2 | 3 | 4 | 5;
 export interface Clearance {
   allowedZones: Zone[]; // empty ⇒ sees nothing (fail-closed)
   maxSensitivity: SensitivityLevel;
+  allowedNamespaces: Namespace[]; // empty ⇒ sees nothing (fail-closed) — the namespace AUTHORIZATION axis (#13)
 }
 
 /**
