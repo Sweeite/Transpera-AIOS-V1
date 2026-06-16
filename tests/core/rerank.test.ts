@@ -78,13 +78,23 @@ describe('#14 gateway.rerank() (hermetic)', () => {
     await expect(rerank('q', ['a'])).rejects.toThrow(/out-of-range index/);
   });
 
-  it('an error response NEVER leaks the documents — status only (§11.10)', async () => {
+  it('an error response NEVER leaks the documents — status only, even when the 4xx body ECHOES the request (§11.10)', async () => {
     process.env.VOYAGE_API_KEY = 'test-key';
-    stubFetch(() => ({ ok: false, status: 400, statusText: 'Bad Request', text: 'provider detail' }));
+    // A 4xx body that echoes our request payload back — the realistic Voyage failure mode (validation errors
+    // quote the offending input). The error must surface NEITHER the document NOR any of the provider body.
+    const echoBody = `400 invalid request: documents=["${SECRET_DOC}"] model=rerank-2.5-lite`;
+    stubFetch(() => ({ ok: false, status: 400, statusText: 'Bad Request', text: echoBody }));
 
     await expect(rerank('the query', [SECRET_DOC])).rejects.toThrow(
-      expect.objectContaining({ message: expect.not.stringContaining(SECRET_DOC) }),
+      expect.objectContaining({
+        message: expect.not.stringContaining(SECRET_DOC), // never the document
+      }),
     );
+    // And not the provider body at all — status + statusText only (the regression: the body must not be appended).
+    await expect(rerank('the query', [SECRET_DOC])).rejects.toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining('invalid request') }),
+    );
+    await expect(rerank('the query', [SECRET_DOC])).rejects.toThrow(/^rerank failed: 400 Bad Request$/);
   });
 
   it('fails loud when VOYAGE_API_KEY is missing (never a silent uncalibrated answer)', async () => {

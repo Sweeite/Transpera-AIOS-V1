@@ -608,9 +608,11 @@ export async function rerank(query: string, documents: string[]): Promise<number
     clearTimeout(timer);
   }
   if (!res.ok) {
-    // Surface status only — never the query/documents (no content in errors/logs, §11.10).
-    const detail = await res.text().catch(() => '');
-    throw new Error(`rerank failed: ${res.status} ${res.statusText} ${detail.slice(0, 200)}`);
+    // Status ONLY — a 4xx body can echo our request payload (the documents = memory statements) back, and this
+    // message is surfaced by the default alert sink (console.error), so the body must never enter it (§11.10).
+    // Drain+discard the body to free the socket; do NOT read it into the error.
+    await res.text().catch(() => '');
+    throw new Error(`rerank failed: ${res.status} ${res.statusText}`);
   }
 
   const json = (await res.json()) as { data?: Array<{ index: number; relevance_score: number }> };
