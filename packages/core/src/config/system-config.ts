@@ -52,6 +52,12 @@ export const KNOWN_KEYS: ConfigKeySpec[] = [
   { key: 'trust_quarantine_threshold', default: 0.2, min: 0, max: 1, qualityAffecting: true }, // below → agent disabled (#29)
   { key: 'embedding_canary_drift_threshold', default: 0.02, min: 0.001, max: 0.2, qualityAffecting: false }, // mean cosine drift over the probe set that trips the alarm (#45)
   { key: 'generation_max_tokens', default: 1024, min: 64, max: 8192, qualityAffecting: false }, // cap on a synthesis call's output (#5 minimal callModel; #10 the single output cap)
+  // The INPUT-side budget for assembled context (#15) — how much knowledge the model SEES, not output. Same
+  // family as retrieval_max_results (qualityAffecting:TRUE): lowering it silently drops relevant memories →
+  // worse answers, so it must be eval-arbitrated (NOT plumbing like generation_max_tokens, which caps output).
+  // The chars-per-token DIVISOR is a pin (CONTEXT_CHARS_PER_TOKEN in harness/context.ts), not a key — this
+  // budget is the one bounded dial that matters (§4.8).
+  { key: 'context_token_budget', default: 12000, min: 512, max: 190000, qualityAffecting: true },
   // ── gateway dials (#10) — bounded; no magic numbers in the chokepoint (§4.8). qualityAffecting:false
   //    (plumbing/latency, not retrieval quality). The gateway routes Anthropic tiers, retries, repairs, falls back.
   { key: 'gateway_retry_count', default: 2, min: 0, max: 5, qualityAffecting: false }, // transient/timeout retries per model before fallback

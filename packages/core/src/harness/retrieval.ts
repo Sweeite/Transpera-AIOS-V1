@@ -32,7 +32,8 @@
  *         sink; it is an OUTAGE, not a knowledge gap, so it logs NO miss (that would teach a false gap).
  *
  * DEFERRED seams (documented, do NOT pre-build):
- *   #15 — rerank-REORDERING the surfaced set (output stays RRF order here; #14 only changes the FLOOR).
+ *   #61 — rerank-REORDERING the surfaced set (output stays RRF order here; #14 only changes the FLOOR).
+ *         (Split off from #15: #15 consumes this RRF order for budget truncation; reordering is #61.)
  *   #24 — chunk-relevance abstention (abstention is memories-only by the #4 decision; chunks are still
  *         searched + permission-filtered, only the SURFACED output is gated on the memory reranker decision).
  *   getConfig — floor/limit/top_n come from `defaultFor()` (the static declared default) until DB-scoped
@@ -156,7 +157,7 @@ export interface RetrievalDiagnostics {
   score: number; // the MAX RERANK score (#14) — the calibrated abstention input, NOT a cosine, NEVER an RRF sum
   degraded: boolean; // true ⇒ the reranker was unavailable and we abstained fail-safe (Decision A)
   rerankerModel: string; // the pinned reranker the floor binds to (RERANKER_MODEL) — honest provenance of the score
-  rerankerScores: Array<{ id: string; score: number }>; // per-candidate scores over the top-N (helps #15 context-tightening)
+  rerankerScores: Array<{ id: string; score: number }>; // per-candidate scores over the top-N (helps #61 rerank-reorder/co-resident drop)
   durationMs: number;
 }
 
@@ -186,7 +187,7 @@ function queryHashOf(text: string): string {
  * (the #13 deferral closed). The score is the SINGLE best calibrated relevance — adding more weak candidates
  * cannot raise a max (a sum could, and would silently defeat the floor; the bug the audit fix forbids). Empty
  * set ⇒ −∞ and NO rerank call (nothing to score, no spend). It returns the per-candidate scores too, so the
- * caller can record them (honest transparency + #15 context-tightening) without a second pass.
+ * caller can record them (honest transparency + #61 rerank-reorder/co-resident drop) without a second pass.
  *
  * This function + the one-line floor compare in `retrieve()` are the SINGLE interface that scores abstention;
  * `retrieve()`'s external signature is unchanged, so no caller changes (the Watch). A rerank failure is thrown
@@ -510,7 +511,7 @@ export async function retrieve(queryText: string, deps: RetrieveDeps): Promise<R
 
   emit(false);
 
-  // Output: each store's RRF-ordered set, capped at maxResults (rerank-REORDERING the surfaced set is the #15
+  // Output: each store's RRF-ordered set, capped at maxResults (rerank-REORDERING the surfaced set is the #61
   // refinement — #14 only changes the FLOOR, not the output order). The dense leg already bounded candidates;
   // each fused set is ≤ 2·maxResults, sliced here to the final cap (already in rrf-desc order from the query).
   return {
