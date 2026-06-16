@@ -4,8 +4,9 @@
  * Knowledge lives in an in-process pglite DB for THIS SESSION ONLY (nothing persists between runs).
  *
  * Run (it loads .env itself, so no flags needed):   pnpm ask
- * Needs OPENAI_API_KEY + ANTHROPIC_API_KEY in .env (real embeddings + real Claude). Each question is a few
- * cents of API. REAL mode only — arbitrary questions need real semantics, not the offline stub.
+ * Needs OPENAI_API_KEY + ANTHROPIC_API_KEY + VOYAGE_API_KEY in .env (real embeddings + real Claude + the #14
+ * reranker). Each question is a few cents of API. REAL mode only — arbitrary questions need real semantics,
+ * not the offline stub.
  *
  * Commands:
  *   <just type a question>     ask your brain — get a sourced "I know this" or an honest "I don't know"
@@ -28,6 +29,7 @@ function loadEnv(): void {
 loadEnv();
 
 import { freshDb } from '../tests/core/helpers/pglite.ts';
+import { grantAll } from '../tests/core/helpers/grant.ts';
 import { writeMemory, ingestSop, type QueryFn } from '../packages/core/src/memory/store.ts';
 import { answerQuestion } from '../packages/core/src/harness/synthesis.ts';
 import { renderAnswer } from '../packages/core/src/harness/provenance.ts';
@@ -53,13 +55,16 @@ async function teach(query: QueryFn, text: string, sourceRef: string): Promise<v
 }
 
 async function main(): Promise<void> {
-  if (!process.env.OPENAI_API_KEY || !process.env.ANTHROPIC_API_KEY) {
-    console.error('Need OPENAI_API_KEY + ANTHROPIC_API_KEY in .env (real embeddings + Claude). Add them and re-run `pnpm ask`.');
+  if (!process.env.OPENAI_API_KEY || !process.env.ANTHROPIC_API_KEY || !process.env.VOYAGE_API_KEY) {
+    console.error('Need OPENAI_API_KEY + ANTHROPIC_API_KEY + VOYAGE_API_KEY in .env (real embeddings + Claude + reranker). Add them and re-run `pnpm ask`.');
     process.exit(1);
   }
 
   const { query } = await freshDb();
-  const deps = { query }; // REAL mode: gateway embeddings + Claude synthesis
+  // REAL mode: gateway embeddings + Claude synthesis + Voyage reranker (all by default). grantAll() supplies the
+  // asking principal + a broad single-user clearance so retrieve()'s #13 fail-closed predicate admits the seeded
+  // org memories instead of denying everything (a real deployment resolves this from a materialised clearance row).
+  const deps = { query, ...grantAll() };
 
   // Seed a couple of starter facts so it isn't empty — replace these by teaching your own with /add.
   await ingestSop(query, {
