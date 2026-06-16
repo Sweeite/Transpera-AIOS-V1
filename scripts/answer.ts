@@ -14,10 +14,11 @@
 import { createHash } from 'node:crypto';
 import { freshDb } from '../tests/core/helpers/pglite.ts';
 import { EMBEDDING_DIM } from '../packages/core/src/harness/gateway.ts';
-import type { CallOptions, CallResult, Embedder } from '../packages/core/src/harness/gateway.ts';
+import type { CallOptions, CallResult, Embedder, Reranker } from '../packages/core/src/harness/gateway.ts';
 import { ingestSop } from '../packages/core/src/memory/store.ts';
 import { answerQuestion, type ModelCaller } from '../packages/core/src/harness/synthesis.ts';
 import { renderAnswer } from '../packages/core/src/harness/provenance.ts';
+import { grantAll } from '../tests/core/helpers/grant.ts';
 
 /** Deterministic synthetic embedder (offline only) — NOT a real embedding, just enough geometry. */
 const synthEmbedder: Embedder = async (texts) =>
@@ -47,12 +48,32 @@ const fakeModel: ModelCaller = (async (opts: CallOptions<unknown>) => {
   return { output, usage: { model: 'fake-offline', durationMs: 0 } } as CallResult<unknown>;
 }) as ModelCaller;
 
+/** Offline query-AWARE reranker (#14 chokepoint, no network): scores each candidate by the fraction of QUERY
+ *  terms present in the document. Enough to reproduce the real split — a relevant doc clears the floor (HIT),
+ *  an unrelated one stays below it (honest ABSTAIN) — which a constant fake reranker could not show. Real mode
+ *  uses the gateway's Voyage reranker instead. */
+const demoReranker: Reranker = async (q, docs) => {
+  const toks = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9]+/g) ?? []);
+  const qt = toks(q);
+  return docs.map((d) => {
+    const dt = toks(d);
+    let hit = 0;
+    for (const t of qt) if (dt.has(t)) hit++;
+    return qt.size ? hit / qt.size : 0;
+  });
+};
+
 async function main(): Promise<void> {
   const { query } = await freshDb();
-  const useReal = !!process.env.OPENAI_API_KEY && !!process.env.ANTHROPIC_API_KEY;
-  const deps = useReal ? { query } : { query, embed: synthEmbedder, callModel: fakeModel };
+  // REAL needs all three providers (embeddings + Claude + the #14 reranker). grantAll() supplies the asking
+  // principal + a broad single-user clearance in BOTH modes so retrieve()'s #13 fail-closed predicate admits the
+  // ingested org memory rather than denying everything (a real deployment resolves this from a clearance row).
+  const useReal = !!process.env.OPENAI_API_KEY && !!process.env.ANTHROPIC_API_KEY && !!process.env.VOYAGE_API_KEY;
+  const deps = useReal
+    ? { query, ...grantAll() }
+    : { query, embed: synthEmbedder, callModel: fakeModel, rerank: demoReranker, ...grantAll() };
   console.log(
-    `mode: ${useReal ? 'REAL (OpenAI embeddings + Claude synthesis)' : 'OFFLINE (synthetic embedder + fake model, no keys)'}\n`,
+    `mode: ${useReal ? 'REAL (OpenAI embeddings + Claude synthesis + Voyage reranker)' : 'OFFLINE (synthetic embedder + fake model + lexical reranker, no keys)'}\n`,
   );
 
   const sopText =
