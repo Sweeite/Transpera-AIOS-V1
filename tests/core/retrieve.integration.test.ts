@@ -1,17 +1,21 @@
 /**
- * Issue #4 — the read half against the REAL provisional vector space (text-embedding-3-large @ 1024).
- * Synthetic vectors are ~0 or ~1, so they CANNOT prove the thing that matters: that a genuine paraphrase of
- * the SOP clears the floor while an off-topic question abstains. Only real embeddings test that separation.
+ * Issue #4 → #14 — the read half against the REAL provisional stack: real embeddings (text-embedding-3-large
+ * @ 1024) AND the real cross-encoder reranker (Voyage, the #14 abstention floor). Synthetic vectors are ~0 or
+ * ~1 and a fake reranker proves nothing — only the real path proves the thing that matters: a genuine
+ * paraphrase of the SOP clears the floor while an off-topic question abstains.
  *
- * Gated on OPENAI_API_KEY: with no key this SKIPS (CI without secrets stays green) — but it is meant to be
- * RUN. Locally: `npx vitest run tests/core/retrieve.integration.test.ts` with the key in .env.
+ * Gated on BOTH OPENAI_API_KEY (the pinned embedder) AND VOYAGE_API_KEY (the pinned reranker) — #14 made the
+ * floor the reranker, so this end-to-end separation now depends on Voyage too. With either key missing this
+ * SKIPS (CI without secrets stays green); it is meant to be RUN locally with both keys in .env. NOTE: we make
+ * the Voyage dependency EXPLICIT in the gate rather than relying on the reranker default, so the test can never
+ * be "green for the wrong reason" via an ambient key while CI without it would run-and-fail (the #14 lesson).
  *
- * ⚠ This is ALSO a probe of the PROVISIONAL floor (0.608 came from the SYNTHETIC #1 bake-off, calibration-set
- *   == test-set). If a legitimate paraphrase lands below 0.608 and this test fails, that is a DATA POINT for
- *   the #43 first-client floor recalibration — NOT a bug to paper over. Do NOT lower the floor to make one
- *   example pass: that is the calibration overfit trap we flagged for #1/#14. The robust assertion here is
- *   the BEHAVIOUR/ORDERING (paraphrase scores clearly above off-topic); the absolute floor crossing is
- *   reported (console) so a borderline value surfaces loudly as the #43 signal.
+ * ⚠ This is ALSO a probe of the PROVISIONAL rerank floor (0.5 is fixture-validated, not calibrated on real
+ *   data — ADR 0003). `score` is now the RERANK score, not the dense cosine. If a legitimate paraphrase lands
+ *   below the floor and this fails, that is a DATA POINT for the #43 first-client floor recalibration — NOT a
+ *   bug to paper over. Do NOT lower the floor to make one example pass (the calibration overfit trap). The
+ *   robust assertion is the BEHAVIOUR/ORDERING (paraphrase scores clearly above off-topic); the absolute floor
+ *   crossing is reported (console) so a borderline value surfaces loudly as the #43 signal.
  */
 import { describe, it, expect } from 'vitest';
 import { freshDb } from './helpers/pglite.ts';
@@ -20,10 +24,10 @@ import { ingestSop } from '../../packages/core/src/memory/store.ts';
 import { defaultFor } from '../../packages/core/src/config/system-config.ts';
 import { grantAll } from './helpers/grant.ts';
 
-const hasKey = !!process.env.OPENAI_API_KEY;
+const hasKeys = !!process.env.OPENAI_API_KEY && !!process.env.VOYAGE_API_KEY;
 const FLOOR = defaultFor('retrieval_min_relevance') as number;
 
-describe.skipIf(!hasKey)('retrieve() against the real provisional embedding space (#4)', () => {
+describe.skipIf(!hasKeys)('retrieve() against the real provisional embedding + reranker stack (#4 → #14)', () => {
   it('a paraphrase of the SOP clears the floor and returns it; an off-topic question abstains + logs a miss', async () => {
     const { query } = await freshDb(); // real embeddings, hermetic DB — the gateway default embedder is used
 
