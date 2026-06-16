@@ -21,6 +21,21 @@ async function seedClearance(query: Query, principalId: string, allowedZones: st
   );
 }
 
+/** Insert a clearance row that ALSO sets allowed_namespaces (#13 — namespace authorization). */
+async function seedClearanceNs(
+  query: Query,
+  principalId: string,
+  allowedZones: string[],
+  maxSensitivity: number,
+  allowedNamespaces: string[],
+) {
+  await query(
+    `INSERT INTO user_clearance (principal_id, allowed_zones, max_sensitivity, allowed_namespaces)
+     VALUES ($1, $2::text[], $3, $4::text[])`,
+    [principalId, allowedZones, maxSensitivity, allowedNamespaces],
+  );
+}
+
 /** Resolve clearance → run the REAL predicate seam against one table → visible row keys (by content_hash). */
 async function visibleKeys(query: Query, table: 'memories' | 'chunks', clearance: Clearance) {
   const { sql, params } = retrievalWhereSql(buildRetrievalPredicate(clearance, ['org']));
@@ -64,7 +79,8 @@ describe('getClearance() — fail-closed resolution (#9)', () => {
     await seedClearance(query, 'u-gen', ['general'], 2); // general only, up to s2
 
     const c = await getClearance(USER('u-gen'), { query });
-    expect(c).toEqual({ allowedZones: ['general'], maxSensitivity: 2 });
+    // allowed_namespaces was not seeded → NULL → [] (fail-closed on the namespace axis); zone+sensitivity resolve.
+    expect(c).toEqual({ allowedZones: ['general'], maxSensitivity: 2, allowedNamespaces: [] });
 
     const mem = await visibleKeys(query, 'memories', c);
     const chk = await visibleKeys(query, 'chunks', c);
@@ -128,9 +144,47 @@ describe('getClearance() — fail-closed resolution (#9)', () => {
   it('(leak) denyAll compiles to `false` REGARDLESS of the maxSensitivity floor value', async () => {
     // The deny floor is never read — retrievalWhereSql short-circuits on denyAll. Prove it for both extremes.
     for (const floor of [1, 5] as SensitivityLevel[]) {
-      const pred = buildRetrievalPredicate({ allowedZones: [], maxSensitivity: floor }, ['org']);
+      const pred = buildRetrievalPredicate({ allowedZones: [], maxSensitivity: floor, allowedNamespaces: ['org'] }, ['org']);
       expect(pred.denyAll).toBe(true);
       expect(retrievalWhereSql(pred).sql).toBe('false'); // never an empty `zone = ANY()`/bare IN
     }
+  });
+});
+
+describe('getClearance() — namespace AUTHORIZATION axis (#13)', () => {
+  it('resolves allowed_namespaces from the row (the authorized set, symmetric with allowed_zones)', async () => {
+    const { query } = await freshDb();
+    await seedClearanceNs(query, 'u-ns', ['general'], 3, ['org', 'client:acme']);
+
+    const c = await getClearance(USER('u-ns'), { query });
+    expect(c.allowedZones).toEqual(['general']);
+    expect(c.maxSensitivity).toBe(3);
+    expect(c.allowedNamespaces).toEqual(['org', 'client:acme']);
+  });
+
+  it('(leak) a row with NULL allowed_namespaces (provisioned pre-#13 / never set) ⇒ [] ⇒ denyAll', async () => {
+    const { query } = await freshDb();
+    // seedClearance does NOT set allowed_namespaces → it is NULL (no force-explicit value).
+    await seedClearance(query, 'u-nullns', ['general'], 3);
+
+    const c = await getClearance(USER('u-nullns'), { query });
+    expect(c.allowedNamespaces).toEqual([]); // non-array/NULL maps to empty — fail-closed
+    // The namespace axis alone denies even though zone + sensitivity are real.
+    expect(buildRetrievalPredicate(c, c.allowedNamespaces).denyAll).toBe(true);
+  });
+
+  it('(leak) an EXISTING row with empty allowed_namespaces ⇒ denyAll (explicit audited empty)', async () => {
+    const { query } = await freshDb();
+    await seedClearanceNs(query, 'u-emptyns', ['general'], 3, []);
+
+    const c = await getClearance(USER('u-emptyns'), { query });
+    expect(c.allowedNamespaces).toEqual([]);
+    expect(buildRetrievalPredicate(c, c.allowedNamespaces).denyAll).toBe(true);
+  });
+
+  it('(leak) the deny clearance carries an EMPTY allowed_namespaces (service / missing / forged)', async () => {
+    const { query } = await freshDb();
+    expect((await getClearance(SERVICE('svc'), { query })).allowedNamespaces).toEqual([]);
+    expect((await getClearance(USER('ghost'), { query })).allowedNamespaces).toEqual([]);
   });
 });

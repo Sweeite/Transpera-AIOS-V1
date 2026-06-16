@@ -5,6 +5,12 @@
 import type { Clearance, Namespace, Principal, SensitivityLevel, Zone } from '@aios/shared';
 import { defaultFor } from '../config/system-config.js';
 
+/** Coerce a Postgres array column to a typed string[] — a NULL or non-array (malformed) value ⇒ [] (fail-closed:
+ *  an absent grant must read as deny, never as the absence of a filter). Used for both authorization axes. */
+function asStringArray<T extends string>(v: unknown): T[] {
+  return Array.isArray(v) ? (v as T[]) : [];
+}
+
 /**
  * Minimal DB executor — matches both pglite (tests) and the real pooled connection (#7 wires getDb()).
  * Defined LOCALLY (not imported from the harness) so the security layer never depends on the harness layer.
@@ -18,7 +24,11 @@ export type QueryFn = (sql: string, params?: unknown[]) => Promise<{ rows: any[]
  * restrictive, never the most permissive. The floor is a bounded `system_config` key, not a literal (§4.8, #9).
  */
 function denyClearance(): Clearance {
-  return { allowedZones: [], maxSensitivity: defaultFor('rbac_default_max_sensitivity') as SensitivityLevel };
+  return {
+    allowedZones: [],
+    maxSensitivity: defaultFor('rbac_default_max_sensitivity') as SensitivityLevel,
+    allowedNamespaces: [], // the namespace axis denies too (empty ⇒ denyAll) — fail-closed on all three axes (#13)
+  };
 }
 
 /**
@@ -51,7 +61,7 @@ async function resolveUserClearance(userId: string, deps: { query: QueryFn }): P
   let rows: any[];
   try {
     ({ rows } = await deps.query(
-      `SELECT allowed_zones, max_sensitivity FROM user_clearance WHERE principal_id = $1`,
+      `SELECT allowed_zones, max_sensitivity, allowed_namespaces FROM user_clearance WHERE principal_id = $1`,
       [userId],
     ));
   } catch (cause) {
@@ -67,11 +77,14 @@ async function resolveUserClearance(userId: string, deps: { query: QueryFn }): P
   const row = rows[0];
 
   // Empty allowed_zones ('{}') passes straight through ⇒ denyAll downstream (explicit, audited empty state).
-  const allowedZones = Array.isArray(row.allowed_zones) ? (row.allowed_zones as Zone[]) : [];
+  const allowedZones = asStringArray<Zone>(row.allowed_zones);
+  // Namespace AUTHORIZATION (#13): NULL (pre-#13 / never provisioned) or '{}' ⇒ [] ⇒ denyAll. Same fail-closed
+  // shape as zones — an absent namespace grant is deny, never "no namespace filter".
+  const allowedNamespaces = asStringArray<Namespace>(row.allowed_namespaces);
   const max = Number(row.max_sensitivity);
   // Defense in depth: the DB CHECK bounds 1..5, but never trust a row that somehow falls outside it — deny.
   if (!Number.isInteger(max) || max < 1 || max > 5) return denyClearance();
-  return { allowedZones, maxSensitivity: max as SensitivityLevel };
+  return { allowedZones, maxSensitivity: max as SensitivityLevel, allowedNamespaces };
 }
 
 /**

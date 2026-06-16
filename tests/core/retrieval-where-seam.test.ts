@@ -1,22 +1,22 @@
 /**
- * Issue #5 / M0 gate — the #13 PERMISSION SEAM is honest, not a lie (Brief §9.1, §3.2).
+ * Issue #13 (was #5/M0 seam) — the PERMISSION TRUST BOUNDARY inside retrieve(), end-to-end.
  *
- * retrieve() now carries BOTH the SQL fragment (`predicate`) AND its bound values (`predicateParams`). This
- * proves the seam end-to-end through retrieve(): a clearance predicate built by rbac.retrievalWhereSql(pred, 3)
- * — numbering from $3 because $1 is the query vector and $2 is the limit — HITs an authorized row, DENYs an
- * unauthorized zone, and an empty clearance (denyAll ⇒ `false`) returns nothing. The full filter lands in
- * #13/M2; this locks the SEAM so it can never silently fail-open.
+ * retrieve() no longer accepts a caller-supplied `predicate` (the old fail-OPEN shape: a caller could pass
+ * 'true'). It now takes a `principal` and derives the clearance+namespace predicate INSIDE the boundary:
+ *   principal → getClearance() → clearance.allowedNamespaces → buildRetrievalPredicate → retrievalWhereSql(…,3).
+ * A missing/forged/service principal resolves to denyClearance() ⇒ `WHERE false` ⇒ zero rows. This proves the
+ * HIT / DENY (zone) / DENY (sensitivity) / denyAll paths through the REAL resolution, not a hand-built fragment.
  *
- * NB: the SQL-level HIT/DENY of retrievalWhereSql itself is also covered against chunks in
- * retrieval-filter.probe.test.ts (#2); this asserts retrieve() THREADS the params correctly ($3+ line up).
+ * getClearance is INJECTED so the test crafts a clearance without seeding a user_clearance row; production uses
+ * the real resolver. The injected resolver is still a resolver — the namespaces are taken from the RESOLVED
+ * clearance (authorized set), never from a caller argument.
  */
 import { describe, it, expect } from 'vitest';
-import type { Clearance } from '@aios/shared';
+import type { Clearance, Principal } from '@aios/shared';
 import { freshDb, synthVector, vec } from './helpers/pglite.ts';
 import { EMBEDDING_MODEL, EMBEDDING_VERSION } from '../../packages/core/src/harness/gateway.ts';
 import type { Embedder } from '../../packages/core/src/harness/gateway.ts';
 import { retrieve } from '../../packages/core/src/harness/retrieval.ts';
-import { buildRetrievalPredicate, retrievalWhereSql } from '../../packages/core/src/rbac/permissions.ts';
 
 /** Insert a memory row with a crafted embedding + explicit access label (bypasses the embedder). */
 async function insertRow(
@@ -42,19 +42,22 @@ const E0 = (() => {
   return v;
 })();
 
-/** retrieve()'s base params are $1 (vector) + $2 (limit), so the clearance fragment numbers from $3. */
-function seam(clearance: Clearance, namespaces: Parameters<typeof buildRetrievalPredicate>[1]) {
-  const { sql, params } = retrievalWhereSql(buildRetrievalPredicate(clearance, namespaces), 3);
-  return { predicate: sql, predicateParams: params };
+const USER: Principal = { kind: 'user', userId: 'u-seam' };
+/** Inject a resolver that returns a crafted clearance (no user_clearance row needed). */
+function withClearance(c: Clearance) {
+  return { principal: USER, getClearance: async () => c };
 }
 
-describe('#13 retrieval permission seam through retrieve() (M0 gate)', () => {
-  it('HIT: a cleared user retrieves the authorized row (params thread correctly from $3)', async () => {
+describe('#13 retrieval permission boundary through retrieve() (principal-derived predicate)', () => {
+  it('HIT: a cleared user retrieves the authorized row (clearance derived from the principal)', async () => {
     const { query } = await freshDb();
     await insertRow(query, { zone: 'general', sensitivity: 1, statement: 'general fact', embedding: E0 });
 
-    const { predicate, predicateParams } = seam({ allowedZones: ['general'], maxSensitivity: 3 }, ['org']);
-    const out = await retrieve('q', { query, embed: fixedEmbedder(E0), predicate, predicateParams });
+    const out = await retrieve('q', {
+      query,
+      embed: fixedEmbedder(E0),
+      ...withClearance({ allowedZones: ['general'], maxSensitivity: 3, allowedNamespaces: ['org'] }),
+    });
 
     expect(out.abstained).toBe(false);
     expect(out.memories).toHaveLength(1);
@@ -65,8 +68,11 @@ describe('#13 retrieval permission seam through retrieve() (M0 gate)', () => {
     const { query } = await freshDb();
     await insertRow(query, { zone: 'finance', sensitivity: 1, statement: 'finance secret', embedding: E0 }); // nearest
 
-    const { predicate, predicateParams } = seam({ allowedZones: ['general'], maxSensitivity: 3 }, ['org']);
-    const out = await retrieve('q', { query, embed: fixedEmbedder(E0), predicate, predicateParams });
+    const out = await retrieve('q', {
+      query,
+      embed: fixedEmbedder(E0),
+      ...withClearance({ allowedZones: ['general'], maxSensitivity: 3, allowedNamespaces: ['org'] }),
+    });
 
     expect(out.abstained).toBe(true); // the nearest-but-forbidden row never surfaces
     expect(out.memories).toEqual([]);
@@ -76,20 +82,40 @@ describe('#13 retrieval permission seam through retrieve() (M0 gate)', () => {
     const { query } = await freshDb();
     await insertRow(query, { zone: 'general', sensitivity: 5, statement: 'restricted', embedding: E0 });
 
-    const { predicate, predicateParams } = seam({ allowedZones: ['general'], maxSensitivity: 3 }, ['org']);
-    const out = await retrieve('q', { query, embed: fixedEmbedder(E0), predicate, predicateParams });
+    const out = await retrieve('q', {
+      query,
+      embed: fixedEmbedder(E0),
+      ...withClearance({ allowedZones: ['general'], maxSensitivity: 3, allowedNamespaces: ['org'] }),
+    });
 
     expect(out.abstained).toBe(true);
     expect(out.memories).toEqual([]);
   });
 
-  it('denyAll: empty allowedZones compiles to `false` ⇒ zero rows (the fail-OPEN trap stays closed)', async () => {
+  it('denyAll: an empty-clearance principal sees zero rows (the fail-OPEN trap stays closed)', async () => {
     const { query } = await freshDb();
     await insertRow(query, { zone: 'general', sensitivity: 1, statement: 'general fact', embedding: E0 });
 
-    const { predicate, predicateParams } = seam({ allowedZones: [], maxSensitivity: 5 }, ['org']);
-    expect(predicate).toBe('false'); // not an empty IN/ANY — WHERE false
-    const out = await retrieve('q', { query, embed: fixedEmbedder(E0), predicate, predicateParams });
+    const out = await retrieve('q', {
+      query,
+      embed: fixedEmbedder(E0),
+      ...withClearance({ allowedZones: [], maxSensitivity: 5, allowedNamespaces: ['org'] }),
+    });
+
+    expect(out.abstained).toBe(true);
+    expect(out.memories).toEqual([]);
+  });
+
+  it('DENY: a forged principal (no injected resolver) resolves to deny via the REAL getClearance ⇒ empty', async () => {
+    const { query } = await freshDb();
+    await insertRow(query, { zone: 'general', sensitivity: 1, statement: 'general fact', embedding: E0 });
+
+    // No getClearance injected and no user_clearance row → the real resolver denies. Forged kind also denies.
+    const out = await retrieve('q', {
+      query,
+      embed: fixedEmbedder(E0),
+      principal: { kind: 'phantom' } as unknown as Principal,
+    });
 
     expect(out.abstained).toBe(true);
     expect(out.memories).toEqual([]);

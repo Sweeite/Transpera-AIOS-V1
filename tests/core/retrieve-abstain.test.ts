@@ -20,6 +20,7 @@ import type { Embedder } from '../../packages/core/src/harness/gateway.ts';
 import { retrieve } from '../../packages/core/src/harness/retrieval.ts';
 import { ingestSop } from '../../packages/core/src/memory/store.ts';
 import { defaultFor } from '../../packages/core/src/config/system-config.ts';
+import { grantAll, grantNothing } from './helpers/grant.ts';
 
 const FLOOR = defaultFor('retrieval_min_relevance') as number; // 0.608 (provisional, #1)
 
@@ -80,7 +81,7 @@ describe('retrieve() acceptance (#4)', () => {
     const SOP = 'To onboard a new client: create the workspace, invite the team, set the kickoff.';
     await ingestSop(query, { namespace: 'org', statement: SOP, sourceRef: 'upload://sop/onboarding.pdf' }, { embed });
 
-    const out = await retrieve(SOP, { query, embed });
+    const out = await retrieve(SOP, { query, embed, ...grantAll() });
 
     expect(out.abstained).toBe(false);
     expect(out.score).toBeGreaterThanOrEqual(FLOOR);
@@ -99,7 +100,7 @@ describe('retrieve() acceptance (#4)', () => {
       { embed },
     );
 
-    const out = await retrieve('what is the airspeed velocity of an unladen swallow', { query, embed });
+    const out = await retrieve('what is the airspeed velocity of an unladen swallow', { query, embed, ...grantAll() });
 
     expect(out.abstained).toBe(true);
     expect(out.score).toBeLessThan(FLOOR);
@@ -121,7 +122,7 @@ describe('retrieve() probes (#4 — make it lie / leak / fail silently)', () => 
     await insertRow(query, { statement: 'weakly-related-a', embedding: cosVector(0.4, 1) });
     await insertRow(query, { statement: 'weakly-related-b', embedding: cosVector(0.4, 2) });
 
-    const out = await retrieve('q', { query, embed: fixedEmbedder(E0) });
+    const out = await retrieve('q', { query, embed: fixedEmbedder(E0), ...grantAll() });
 
     expect(out.abstained).toBe(true);
     expect(out.score).toBeCloseTo(0.4, 6); // the single best cosine, surfaced honestly
@@ -136,7 +137,7 @@ describe('retrieve() probes (#4 — make it lie / leak / fail silently)', () => 
       await insertRow(query, { statement: `weak-${axis}`, embedding: cosVector(0.4, axis) });
     }
 
-    const out = await retrieve('q', { query, embed: fixedEmbedder(E0) });
+    const out = await retrieve('q', { query, embed: fixedEmbedder(E0), ...grantAll() });
 
     expect(out.score).toBeCloseTo(0.4, 6); // top-1, not 1.6
     expect(out.abstained).toBe(true); // the floor holds against accumulation
@@ -147,13 +148,13 @@ describe('retrieve() probes (#4 — make it lie / leak / fail silently)', () => 
     const { query } = await freshDb();
     await insertRow(query, { statement: 'borderline', embedding: cosVector(0.65, 1) }); // 0.65 > default 0.608
 
-    const hit = await retrieve('q', { query, embed: fixedEmbedder(E0) }); // default floor
+    const hit = await retrieve('q', { query, embed: fixedEmbedder(E0), ...grantAll() }); // default floor
     expect(hit.abstained).toBe(false);
     expect(hit.score).toBeCloseTo(0.65, 6);
     expect(hit.memories).toHaveLength(1);
     expect(await missCount(query)).toBe(0);
 
-    const abstain = await retrieve('q', { query, embed: fixedEmbedder(E0), floor: 0.7 }); // raise the dial
+    const abstain = await retrieve('q', { query, embed: fixedEmbedder(E0), floor: 0.7, ...grantAll() }); // raise the dial
     expect(abstain.abstained).toBe(true);
     expect(abstain.memories).toEqual([]);
     expect(await missCount(query)).toBe(1);
@@ -163,7 +164,7 @@ describe('retrieve() probes (#4 — make it lie / leak / fail silently)', () => 
 
   it('empty corpus abstains and logs a miss with a null top_score (no silent empty)', async () => {
     const { query } = await freshDb();
-    const out = await retrieve('anything at all', { query, embed: fixedEmbedder(E0) });
+    const out = await retrieve('anything at all', { query, embed: fixedEmbedder(E0), ...grantAll() });
 
     expect(out.abstained).toBe(true);
     expect(out.score).toBe(Number.NEGATIVE_INFINITY);
@@ -172,16 +173,16 @@ describe('retrieve() probes (#4 — make it lie / leak / fail silently)', () => 
     expect((await query(`SELECT top_score FROM retrieval_misses`)).rows[0].top_score).toBeNull();
   });
 
-  it('the predicate is a fail-closed SQL seam (#13): WHERE false hides an exact match (never an app post-filter)', async () => {
+  it('the predicate is a fail-closed SQL seam (#13): an empty clearance hides an exact match (never an app post-filter)', async () => {
     const { query } = await freshDb();
     await insertRow(query, { statement: 'an exact match', embedding: E0 }); // cosine 1.0 to the query
 
-    // Default seam ('true') finds it; the #13-shaped fragment 'false' must hide it at the SQL level.
-    const open = await retrieve('q', { query, embed: fixedEmbedder(E0) });
+    // A granting clearance finds it; an EMPTY clearance (denyAll ⇒ WHERE false) must hide it at the SQL level.
+    const open = await retrieve('q', { query, embed: fixedEmbedder(E0), ...grantAll() });
     expect(open.abstained).toBe(false);
     expect(open.memories).toHaveLength(1);
 
-    const closed = await retrieve('q', { query, embed: fixedEmbedder(E0), predicate: 'false' });
+    const closed = await retrieve('q', { query, embed: fixedEmbedder(E0), ...grantNothing() });
     expect(closed.abstained).toBe(true); // filtered out BEFORE ranking — not retrieved-then-filtered
     expect(closed.memories).toEqual([]);
   });
@@ -191,7 +192,7 @@ describe('retrieve() probes (#4 — make it lie / leak / fail silently)', () => 
     for (let axis = 1; axis <= 25; axis++) {
       await insertRow(query, { statement: `row-${axis}`, embedding: cosVector(0.7, axis) }); // all above floor
     }
-    const out = await retrieve('q', { query, embed: fixedEmbedder(E0) });
+    const out = await retrieve('q', { query, embed: fixedEmbedder(E0), ...grantAll() });
     expect(out.abstained).toBe(false);
     expect(out.memories.length).toBe(defaultFor('retrieval_max_results')); // 20, not 25
   });
@@ -204,7 +205,7 @@ describe('retrieve() probes (#4 — make it lie / leak / fail silently)', () => 
       calls.push(texts);
       return texts.map(() => E0);
     };
-    await retrieve('my question', { query, embed });
+    await retrieve('my question', { query, embed, ...grantAll() });
     expect(calls).toEqual([['my question']]); // one batch, the query text, nothing else
   });
 });

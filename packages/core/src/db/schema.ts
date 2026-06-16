@@ -23,6 +23,7 @@ import {
   bigserial,
   timestamp,
   vector,
+  customType,
 } from 'drizzle-orm/pg-core';
 import type {
   Provenance,
@@ -39,6 +40,10 @@ import type {
 
 // Shorthand for the columns that repeat everywhere. timestamptz throughout (never naive timestamp).
 const tstz = (name: string) => timestamp(name, { withTimezone: true });
+
+// pgvector has a Drizzle helper; tsvector (the keyword-leg generated column, 0014/#13) does not — declare it.
+// Query-builder type only; the column itself is GENERATED ALWAYS in the migration (the source of truth).
+const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' });
 
 // ── memories ── full @aios/shared `Memory`. 0001 (base) + 0002 (type/provenance) + 0004 (lifecycle). ───────
 export const memories = pgTable('memories', {
@@ -64,6 +69,7 @@ export const memories = pgTable('memories', {
   utilityScore: doublePrecision('utility_score'), // computed by decay, not on write (§4.6)
   retrievalCount: integer('retrieval_count').notNull(),
   lastRetrievedAt: tstz('last_retrieved_at'),
+  ts: tsvector('ts'), // 0014/#13: keyword leg — GENERATED ALWAYS from `statement` ('english'); nullable, no NOT NULL
 });
 
 // ── chunks ── full @aios/shared `Chunk`. 0001 (base) + 0004 (provenance). content_hash is an extra dedup
@@ -81,6 +87,7 @@ export const chunks = pgTable('chunks', {
   createdAt: tstz('created_at').notNull().defaultNow(),
   expiresAt: tstz('expires_at').notNull(), // chunk_ttl_days, default 90 (§4.2)
   provenance: jsonb('provenance').$type<Provenance>().notNull(),
+  ts: tsvector('ts'), // 0014/#13: keyword leg — GENERATED ALWAYS from `text` ('english'); nullable, no NOT NULL
 });
 
 // ── retrieval_misses ── 0003 (M0 read half). DB-only; #32/#50 add query_text + aggregation. ────────────────
@@ -204,6 +211,7 @@ export const userClearance = pgTable('user_clearance', {
   principalId: text('principal_id').primaryKey(),
   allowedZones: text('allowed_zones').array().notNull(), // empty {} ⇒ sees nothing (fail-closed)
   maxSensitivity: smallint('max_sensitivity').notNull(),
+  allowedNamespaces: text('allowed_namespaces').array(), // 0014/#13: NULL/'{}' ⇒ denyAll; nullable, NO default (force-explicit)
   createdAt: tstz('created_at').notNull().defaultNow(),
   updatedAt: tstz('updated_at').notNull().defaultNow(),
 });
@@ -214,6 +222,7 @@ export const roles = pgTable('roles', {
   defaultAllowedZones: text('default_allowed_zones').array().notNull(),
   defaultMaxSensitivity: smallint('default_max_sensitivity').notNull(),
   allowedAgents: text('allowed_agents').array().notNull(),
+  defaultAllowedNamespaces: text('default_allowed_namespaces').array().notNull(), // 0014/#13: provisioning symmetry
   createdAt: tstz('created_at').notNull().defaultNow(),
 });
 
