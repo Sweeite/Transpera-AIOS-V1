@@ -17,6 +17,7 @@ import { freshDb, synthVector, vec } from './helpers/pglite.ts';
 import { EMBEDDING_MODEL, EMBEDDING_VERSION } from '../../packages/core/src/harness/gateway.ts';
 import type { Embedder } from '../../packages/core/src/harness/gateway.ts';
 import { retrieve } from '../../packages/core/src/harness/retrieval.ts';
+import { constReranker } from './helpers/rerank.ts';
 
 /** Insert a memory row with a crafted embedding + explicit access label (bypasses the embedder). */
 async function insertRow(
@@ -55,7 +56,7 @@ describe('#13 retrieval permission boundary through retrieve() (principal-derive
 
     const out = await retrieve('q', {
       query,
-      embed: fixedEmbedder(E0),
+      embed: fixedEmbedder(E0), rerank: constReranker(0.99),
       ...withClearance({ allowedZones: ['general'], maxSensitivity: 3, allowedNamespaces: ['org'] }),
     });
 
@@ -70,7 +71,7 @@ describe('#13 retrieval permission boundary through retrieve() (principal-derive
 
     const out = await retrieve('q', {
       query,
-      embed: fixedEmbedder(E0),
+      embed: fixedEmbedder(E0), rerank: constReranker(0.99),
       ...withClearance({ allowedZones: ['general'], maxSensitivity: 3, allowedNamespaces: ['org'] }),
     });
 
@@ -84,7 +85,7 @@ describe('#13 retrieval permission boundary through retrieve() (principal-derive
 
     const out = await retrieve('q', {
       query,
-      embed: fixedEmbedder(E0),
+      embed: fixedEmbedder(E0), rerank: constReranker(0.99),
       ...withClearance({ allowedZones: ['general'], maxSensitivity: 3, allowedNamespaces: ['org'] }),
     });
 
@@ -98,7 +99,7 @@ describe('#13 retrieval permission boundary through retrieve() (principal-derive
 
     const out = await retrieve('q', {
       query,
-      embed: fixedEmbedder(E0),
+      embed: fixedEmbedder(E0), rerank: constReranker(0.99),
       ...withClearance({ allowedZones: [], maxSensitivity: 5, allowedNamespaces: ['org'] }),
     });
 
@@ -113,7 +114,7 @@ describe('#13 retrieval permission boundary through retrieve() (principal-derive
     // No getClearance injected and no user_clearance row → the real resolver denies. Forged kind also denies.
     const out = await retrieve('q', {
       query,
-      embed: fixedEmbedder(E0),
+      embed: fixedEmbedder(E0), rerank: constReranker(0.99),
       principal: { kind: 'phantom' } as unknown as Principal,
     });
 

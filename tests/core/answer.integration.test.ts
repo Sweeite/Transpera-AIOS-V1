@@ -19,6 +19,7 @@ import { ingestSop } from '../../packages/core/src/memory/store.ts';
 import { answerQuestion, type ModelCaller } from '../../packages/core/src/harness/synthesis.ts';
 import { renderAnswer, ABSTENTION_COPY } from '../../packages/core/src/harness/provenance.ts';
 import { grantAll } from './helpers/grant.ts';
+import { constReranker } from './helpers/rerank.ts';
 
 const SOP = 'To onboard a new client: create the workspace, invite the team, and book the kickoff.';
 
@@ -64,7 +65,7 @@ describe('answerQuestion() acceptance (#5 — THE DEMO)', () => {
       calls,
     );
 
-    const { answer, retrieval } = await answerQuestion(SOP, { query, embed, callModel, ...grantAll() });
+    const { answer, retrieval } = await answerQuestion(SOP, { query, embed, callModel, rerank: constReranker(0.99), ...grantAll() });
 
     expect(answer.abstained).toBe(false);
     expect(answer.claims).toHaveLength(1);
@@ -91,7 +92,7 @@ describe('answerQuestion() acceptance (#5 — THE DEMO)', () => {
       { text: 'Invoices are due in 7 days.', sourceId: 'mem-FABRICATED-not-retrieved' }, // a lie
     ]);
 
-    const { answer } = await answerQuestion(SOP, { query, embed, callModel, onFabricatedCitation: (i) => signals.push(i), ...grantAll() });
+    const { answer } = await answerQuestion(SOP, { query, embed, callModel, rerank: constReranker(0.99), onFabricatedCitation: (i) => signals.push(i), ...grantAll() });
 
     const claim = answer.claims[0]!;
     expect(claim.label).toBe('general-inference'); // NEVER surfaced as "I know this"
@@ -113,6 +114,8 @@ describe('answerQuestion() acceptance (#5 — THE DEMO)', () => {
       query,
       embed,
       callModel,
+      // The candidate is surfaced (dense/keyword), but the reranker scores it below the floor ⇒ honest abstain.
+      rerank: constReranker(0.1),
       ...grantAll(),
     });
 
