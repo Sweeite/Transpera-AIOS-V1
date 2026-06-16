@@ -19,6 +19,7 @@ import { EMBEDDING_DIM, EMBEDDING_MODEL, EMBEDDING_VERSION } from '../../package
 import type { Embedder } from '../../packages/core/src/harness/gateway.ts';
 import { retrieve } from '../../packages/core/src/harness/retrieval.ts';
 import { grantAll } from './helpers/grant.ts';
+import { constReranker } from './helpers/rerank.ts';
 
 const E0 = (() => {
   const v = new Array<number>(EMBEDDING_DIM).fill(0);
@@ -58,7 +59,7 @@ describe('#13 selectivity switch — bounded-count routing (exact ↔ HNSW)', ()
     const { query } = await freshDb();
     await seedN(query, 3);
 
-    const out = await retrieve('zulu', { query, embed: fixedEmbedder(E0), exactMaxRows: 10, ...grantAll() });
+    const out = await retrieve('zulu', { query, embed: fixedEmbedder(E0), rerank: constReranker(0.99), exactMaxRows: 10, ...grantAll() });
 
     expect(out.diagnostics.memories.mode).toBe('exact');
     expect(out.diagnostics.memories.candidateCount).toBe(3); // bounded count saw all 3
@@ -68,7 +69,7 @@ describe('#13 selectivity switch — bounded-count routing (exact ↔ HNSW)', ()
     const { query } = await freshDb();
     await seedN(query, 3);
 
-    const out = await retrieve('zulu', { query, embed: fixedEmbedder(E0), exactMaxRows: 2, ...grantAll() });
+    const out = await retrieve('zulu', { query, embed: fixedEmbedder(E0), rerank: constReranker(0.99), exactMaxRows: 2, ...grantAll() });
 
     expect(out.diagnostics.memories.mode).toBe('hnsw');
     // The bounded count short-circuits at threshold+1 — it never counts the whole corpus.
@@ -79,10 +80,10 @@ describe('#13 selectivity switch — bounded-count routing (exact ↔ HNSW)', ()
     const { query } = await freshDb();
     await seedN(query, 4);
 
-    const exact = await retrieve('zulu', { query, embed: fixedEmbedder(E0), exactMaxRows: 4, ...grantAll() });
+    const exact = await retrieve('zulu', { query, embed: fixedEmbedder(E0), rerank: constReranker(0.99), exactMaxRows: 4, ...grantAll() });
     expect(exact.diagnostics.memories.mode).toBe('exact'); // 4 ≤ 4
 
-    const hnsw = await retrieve('zulu', { query, embed: fixedEmbedder(E0), exactMaxRows: 3, ...grantAll() });
+    const hnsw = await retrieve('zulu', { query, embed: fixedEmbedder(E0), rerank: constReranker(0.99), exactMaxRows: 3, ...grantAll() });
     expect(hnsw.diagnostics.memories.mode).toBe('hnsw'); // count caps at 4 > 3
   });
 
@@ -95,7 +96,7 @@ describe('#13 selectivity switch — bounded-count routing (exact ↔ HNSW)', ()
     // proven on real pgvector in selectivity-switch.real.test.ts.)
     const out = await retrieve('zulu', {
       query,
-      embed: fixedEmbedder(E0),
+      embed: fixedEmbedder(E0), rerank: constReranker(0.99),
       exactMaxRows: 1,
       transaction: pgliteTx(db),
       ...grantAll(),
@@ -111,7 +112,7 @@ describe('#13 selectivity switch — bounded-count routing (exact ↔ HNSW)', ()
     // cosines 0.89, 0.88, 0.87 … strictly descending; nearest is item 1.
     await seedN(query, 5);
 
-    const out = await retrieve('zulu', { query, embed: fixedEmbedder(E0), exactMaxRows: 100, ...grantAll() });
+    const out = await retrieve('zulu', { query, embed: fixedEmbedder(E0), rerank: constReranker(0.99), exactMaxRows: 100, ...grantAll() });
 
     expect(out.diagnostics.memories.mode).toBe('exact');
     expect(out.abstained).toBe(false);

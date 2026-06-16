@@ -1,0 +1,6 @@
+{
+  "name": "@aios/reranker-calibration",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway eval tooling for Issue #14 — derive + pin the reranker abstention floor. Not part of the sealed core."
+}

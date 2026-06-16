@@ -17,6 +17,7 @@ import { freshDb, vec, type Query } from './helpers/pglite.ts';
 import { EMBEDDING_DIM, EMBEDDING_MODEL, EMBEDDING_VERSION } from '../../packages/core/src/harness/gateway.ts';
 import type { Embedder } from '../../packages/core/src/harness/gateway.ts';
 import { retrieve } from '../../packages/core/src/harness/retrieval.ts';
+import { constReranker } from './helpers/rerank.ts';
 
 const E0 = (() => {
   const v = new Array<number>(EMBEDDING_DIM).fill(0);
@@ -24,6 +25,8 @@ const E0 = (() => {
   return v;
 })();
 const embed: Embedder = async (texts) => texts.map(() => E0);
+// A clearing reranker for the VISIBLE-row hit path (the floor isn't the point here — permissions are). On the
+// denied paths candidates are filtered to empty, so the reranker is never called (proven in reranker-egress).
 const USER = (userId: string): Principal => ({ kind: 'user', userId });
 
 async function seedClearance(query: Query, userId: string, zones: string[], maxSensitivity: number, namespaces: string[]) {
@@ -52,7 +55,7 @@ async function insertChunk(query: Query, o: { ns?: string; zone: string; sens?: 
 
 /** Run retrieve() through the REAL resolver (seeded row) and return the surfaced statements/texts. */
 async function visible(query: Query, userId: string) {
-  const out = await retrieve('q', { query, embed, principal: USER(userId) });
+  const out = await retrieve('q', { query, embed, rerank: constReranker(0.99), principal: USER(userId) });
   return {
     out,
     memTexts: out.memories.map((m) => m.statement),

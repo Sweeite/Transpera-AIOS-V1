@@ -21,6 +21,7 @@ import {
 } from '../../packages/core/src/memory/store.ts';
 import { retrieve } from '../../packages/core/src/harness/retrieval.ts';
 import { grantAll } from './helpers/grant.ts';
+import { constReranker } from './helpers/rerank.ts';
 
 const embed = async (texts: string[]) => texts.map((t) => synthVector(t));
 
@@ -166,12 +167,12 @@ describe('retrieve() filters to the live set — status=active is a BASE conjunc
 
     // Sanity: it's retrievable while active (exact-match query → cosine 1.0, clears any floor). The clearance
     // GRANTS access — so what hides the row after invalidation is the status='active' BASE conjunct, not the seam.
-    const before = await retrieve('we use vendor Acme', { query, embed, floor: 0.5, ...grantAll() });
+    const before = await retrieve('we use vendor Acme', { query, embed, rerank: constReranker(0.99), floor: 0.5, ...grantAll() });
     expect(before.memories.map((m) => m.id)).toContain(w.memory.id);
 
     await invalidate(query, w.memory.id, { code: 'manual' }, { transaction: pgliteTx(db) });
 
-    const after = await retrieve('we use vendor Acme', { query, embed, floor: 0.5, ...grantAll() });
+    const after = await retrieve('we use vendor Acme', { query, embed, rerank: constReranker(0.99), floor: 0.5, ...grantAll() });
     expect(after.memories.map((m) => m.id)).not.toContain(w.memory.id);
     expect(after.abstained).toBe(true); // nothing else active → honest abstention, not a below-floor reach
   });

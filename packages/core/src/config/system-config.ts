@@ -16,12 +16,19 @@ export interface ConfigKeySpec {
 
 /** A few load-bearing keys (full set lives in the DB). */
 export const KNOWN_KEYS: ConfigKeySpec[] = [
-  // PROVISIONAL (#1): the v1 dense-cosine abstention floor. 0.608 = the openai-3-large@1024/float floor from
-  // the SYNTHETIC dry run — an indicative starting value, NOT validated (calibration set == test set on ~30
-  // synthetic pairs). Re-derive on real de-identified content at first-client onboarding (#43), and again when
-  // the reranker lands (#14 — a different scale). See docs/adr/0001-embedding-model-pin.md.
-  { key: 'retrieval_min_relevance', default: 0.608, min: 0.5, max: 0.95, qualityAffecting: true },
+  // PROVISIONAL (#14): the abstention floor is now the cross-encoder RERANK score (a Voyage relevance score on
+  // the normalised [0,1] range), NOT the dense cosine of #1. The cosine-era value (0.608 on [0.5,0.95]) is
+  // SUPERSEDED — a different scale, re-derived, never reused (ADR 0003 supersedes ADR 0001's floor). 0.5 is a
+  // PROVISIONAL fixture-validated starting value, NOT calibrated on real data; the held-out separation-score
+  // calibration (target: TP recall ≥ 0.90) is deferred to first-client onboarding (#43). See docs/adr/0003.
+  { key: 'retrieval_min_relevance', default: 0.5, min: 0, max: 1, qualityAffecting: true },
   { key: 'retrieval_max_results', default: 20, min: 1, max: 100, qualityAffecting: true },
+  // #14 reranker dials (the model/version pins are CONSTANTS in gateway.ts + ADR 0003, not keys — a model name
+  // is not a threshold). top_n = how many fused candidates the ONE rerank call scores (bound it, the Watch).
+  { key: 'reranker_top_n', default: 20, min: 1, max: 100, qualityAffecting: true },
+  // The rerank call's abort timeout — it sits in the interactive retrieval path (under latency_budget_ms 8000),
+  // so it gets its own bound; plumbing/latency, not retrieval quality (qualityAffecting:false).
+  { key: 'reranker_timeout_ms', default: 5000, min: 500, max: 30000, qualityAffecting: false },
   { key: 'chunk_ttl_days', default: 90, min: 7, max: 365, qualityAffecting: false },
   // Trace store TTL (#11): a span is debug-held only ephemerally, then auto-pruned (§6.9). Plumbing, not
   // retrieval quality. The prune job (harness/trace.ts) deletes traces past this age; audit_log is FOREVER.

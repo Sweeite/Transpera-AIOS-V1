@@ -77,24 +77,24 @@ describe('system_config — bounds live in KNOWN_KEYS, DB stores only values (#8
 describe('system_config — READ clamps a stored OOB value + alarms, NEVER silently (#8)', () => {
   it('a stored above-max value is clamped to max AND fires onAnomaly', async () => {
     const { query } = await freshDb();
-    await seedValue(query, 'retrieval_min_relevance', 0.99); // max is 0.95
+    await seedValue(query, 'retrieval_min_relevance', 1.5); // max is 1 (rerank scale, #14 — was 0.95 on cosine)
     const onAnomaly = vi.fn();
-    expect(await getConfig('retrieval_min_relevance', 'org', { query, onAnomaly })).toBe(0.95);
+    expect(await getConfig('retrieval_min_relevance', 'org', { query, onAnomaly })).toBe(1);
     expect(onAnomaly).toHaveBeenCalledOnce();
     expect(onAnomaly.mock.calls[0][0]).toMatchObject({ key: 'retrieval_min_relevance', reason: 'out_of_bounds' });
   });
 
   it('a stored below-min value is clamped to min', async () => {
     const { query } = await freshDb();
-    await seedValue(query, 'retrieval_min_relevance', 0.1); // min is 0.5
-    expect(await getConfig('retrieval_min_relevance', 'org', { query, onAnomaly: () => {} })).toBe(0.5);
+    await seedValue(query, 'retrieval_min_relevance', -0.3); // min is 0 (rerank scale, #14 — was 0.5 on cosine)
+    expect(await getConfig('retrieval_min_relevance', 'org', { query, onAnomaly: () => {} })).toBe(0);
   });
 
   it('(no-silent) with onAnomaly OMITTED a clamp still does NOT swallow — it logs loudly', async () => {
     const { query } = await freshDb();
-    await seedValue(query, 'retrieval_min_relevance', 0.99);
+    await seedValue(query, 'retrieval_min_relevance', 1.5);
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await getConfig('retrieval_min_relevance', 'org', { query })).toBe(0.95); // still fail-safe
+    expect(await getConfig('retrieval_min_relevance', 'org', { query })).toBe(1); // still fail-safe
     expect(spy).toHaveBeenCalled(); // surfaced + alertable, never silent
     spy.mockRestore();
   });
@@ -128,7 +128,7 @@ describe('system_config — READ clamps a stored OOB value + alarms, NEVER silen
 describe('system_config — WRITE rejects OOB loudly, never clamps (#8 red line)', () => {
   it('(no-silent) an above-max write is REJECTED and the DB is left untouched', async () => {
     const { query } = await freshDb();
-    await expect(proposeConfigChange('retrieval_min_relevance', 0.99, 'fat finger', { query })).rejects.toThrow();
+    await expect(proposeConfigChange('retrieval_min_relevance', 1.5, 'fat finger', { query })).rejects.toThrow();
     const rows = await query(`SELECT count(*)::int AS n FROM system_config WHERE key = 'retrieval_min_relevance'`);
     expect(rows.rows[0].n).toBe(0); // never written
     expect(await getConfig('retrieval_min_relevance', 'org', { query })).toBe(defaultFor('retrieval_min_relevance'));
@@ -136,7 +136,7 @@ describe('system_config — WRITE rejects OOB loudly, never clamps (#8 red line)
 
   it('a below-min write is rejected', async () => {
     const { query } = await freshDb();
-    await expect(proposeConfigChange('retrieval_min_relevance', 0.1, 'x', { query })).rejects.toThrow();
+    await expect(proposeConfigChange('retrieval_min_relevance', -0.3, 'x', { query })).rejects.toThrow();
   });
 
   it('a NaN / non-finite write is rejected', async () => {

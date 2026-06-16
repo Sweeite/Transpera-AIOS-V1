@@ -11,6 +11,7 @@ import { EMBEDDING_DIM, EMBEDDING_MODEL, EMBEDDING_VERSION } from '../../package
 import type { Embedder } from '../../packages/core/src/harness/gateway.ts';
 import { retrieve, type RetrievalDiagnostics } from '../../packages/core/src/harness/retrieval.ts';
 import { grantAll } from './helpers/grant.ts';
+import { constReranker } from './helpers/rerank.ts';
 
 const E0 = (() => {
   const v = new Array<number>(EMBEDDING_DIM).fill(0);
@@ -37,6 +38,7 @@ describe('#13 retrieve() diagnostics sink', () => {
     const out = await retrieve('revenue forecast', {
       query,
       embed,
+      rerank: constReranker(0.99),
       exactMaxRows: 100,
       onRetrieval: (d) => seen.push(d),
       ...grantAll(),

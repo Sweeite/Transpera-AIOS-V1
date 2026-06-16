@@ -1,22 +1,25 @@
 /**
- * Issue #13 — HYBRID retrieval: a keyword (tsvector) leg fused with the dense leg by Reciprocal Rank Fusion.
+ * Issue #13 → #14 — HYBRID retrieval: a keyword (tsvector) leg fused with the dense leg by Reciprocal Rank
+ * Fusion, with the abstention decision made by the #14 RERANKER over the fused union.
  *
  * Two load-bearing properties (each a permanent regression test):
- *   • RRF FUSES ranks: a doc that is only MODERATELY close in dense space but a STRONG keyword match can be
- *     ranked ABOVE a denser-but-keyword-absent doc. RRF changes the ORDER of the surfaced set.
- *   • RRF ORDERS ONLY — it does NOT move the abstention input. `score` stays the TOP-1 PRE-FUSION DENSE COSINE
- *     (the #4/#14 contract), never the RRF sum. Adding a keyword leg cannot push a below-floor corpus over the
- *     floor (the dense-only abstention is a CONSCIOUS deferral until the #14 reranker — recorded here).
+ *   • RRF FUSES ranks: a doc only MODERATELY close in dense space but a STRONG keyword match can be ranked
+ *     ABOVE a denser-but-keyword-absent doc. RRF changes the ORDER of the surfaced set (output stays RRF order;
+ *     rerank-REORDERING the surfaced set is the #15 refinement). The abstention SCORE is the reranker's, never
+ *     the RRF sum.
+ *   • The #14 reranker scores the FUSED UNION: a keyword-strong candidate whose dense cosine is BELOW the old
+ *     dense floor now CLEARS when the reranker scores it high (the #13 dense-only-abstention deferral is CLOSED
+ *     — the canonical case lives in reranker-floor.test.ts (b); here we prove it through the fusion path).
  */
 import { describe, it, expect } from 'vitest';
 import { freshDb, vec } from './helpers/pglite.ts';
 import { EMBEDDING_DIM, EMBEDDING_MODEL, EMBEDDING_VERSION } from '../../packages/core/src/harness/gateway.ts';
 import type { Embedder } from '../../packages/core/src/harness/gateway.ts';
 import { retrieve } from '../../packages/core/src/harness/retrieval.ts';
-import { defaultFor } from '../../packages/core/src/config/system-config.ts';
 import { grantAll } from './helpers/grant.ts';
+import { constReranker, scriptedReranker } from './helpers/rerank.ts';
 
-const FLOOR = defaultFor('retrieval_min_relevance') as number; // 0.608
+const RERANK_FLOOR = 0.5; // a rerank-scale floor injected explicitly (#14 — was the 0.608 cosine floor)
 
 const E0 = (() => {
   const v = new Array<number>(EMBEDDING_DIM).fill(0);
@@ -46,7 +49,7 @@ async function insertRow(
   );
 }
 
-describe('#13 RRF fusion — keyword leg + dense leg', () => {
+describe('#13/#14 RRF fusion — keyword leg + dense leg + reranked floor', () => {
   it('a strong keyword match is promoted above a denser, keyword-absent doc (RRF reorders the set)', async () => {
     const { query } = await freshDb();
     // A: densest (0.95) but no keyword overlap with the query.  B: above-floor (0.62) AND a keyword match.
@@ -54,29 +57,41 @@ describe('#13 RRF fusion — keyword leg + dense leg', () => {
     await insertRow(query, { statement: 'quarterly revenue forecast for the board', embedding: cosVector(0.62, 2) });
 
     // The query text drives BOTH legs: embed → E0 (fixed), keyword → websearch_to_tsquery('revenue forecast').
-    const out = await retrieve('revenue forecast', { query, embed: fixedEmbedder(E0), ...grantAll() });
+    const out = await retrieve('revenue forecast', {
+      query,
+      embed: fixedEmbedder(E0),
+      rerank: constReranker(0.9),
+      floor: RERANK_FLOOR,
+      ...grantAll(),
+    });
 
     expect(out.abstained).toBe(false);
-    // RRF: B gets dense-rank-2 + keyword-rank-1; A gets dense-rank-1 + no keyword → B fuses ABOVE A.
+    // RRF: B gets dense-rank-2 + keyword-rank-1; A gets dense-rank-1 + no keyword → B fuses ABOVE A. The output
+    // order stays RRF (rerank-reordering is #15), so B is still first.
     expect(out.memories.map((m) => m.statement)).toEqual([
       'quarterly revenue forecast for the board',
       'alpha bravo charlie delta',
     ]);
-    // But the SCORE is the pre-fusion dense top-1 cosine (A's 0.95), NOT the RRF sum (which is < 0.05).
-    expect(out.score).toBeCloseTo(0.95, 5);
+    // The SCORE is the reranker's max (0.9), NOT the dense cosine and NEVER the RRF sum (which is < 0.05).
+    expect(out.score).toBeCloseTo(0.9, 6);
   });
 
-  it('RRF orders only: a keyword-strong but dense-below-floor corpus still ABSTAINS (#14 deferral, recorded)', async () => {
+  it('the reranker scores the FUSED union: a keyword-strong, dense-below-floor doc now CLEARS (#13 deferral closed)', async () => {
     const { query } = await freshDb();
-    // Strong keyword match, but the BEST dense cosine (0.40) is below the 0.608 floor.
+    // Strong keyword match, but the BEST dense cosine (0.40) is below the old 0.608 dense floor — v1 abstained.
     await insertRow(query, { statement: 'revenue forecast revenue forecast quarterly', embedding: cosVector(0.4, 1) });
 
-    const out = await retrieve('revenue forecast', { query, embed: fixedEmbedder(E0), ...grantAll() });
+    const out = await retrieve('revenue forecast', {
+      query,
+      embed: fixedEmbedder(E0),
+      // The reranker — not the dense cosine — now decides: it scores this keyword-surfaced candidate high.
+      rerank: scriptedReranker({ 'revenue forecast revenue forecast quarterly': 0.82 }),
+      floor: RERANK_FLOOR,
+      ...grantAll(),
+    });
 
-    // The keyword leg cannot rescue a below-dense-floor corpus: abstention is the dense top-1, not the RRF sum.
-    expect(out.score).toBeCloseTo(0.4, 6);
-    expect(out.score).toBeLessThan(FLOOR);
-    expect(out.abstained).toBe(true);
-    expect(out.memories).toEqual([]);
+    expect(out.abstained).toBe(false); // the keyword leg's candidate is rescued by the reranker (was the deferral)
+    expect(out.score).toBeCloseTo(0.82, 6);
+    expect(out.memories.map((m) => m.statement)).toEqual(['revenue forecast revenue forecast quarterly']);
   });
 });

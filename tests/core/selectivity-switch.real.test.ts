@@ -20,6 +20,9 @@ import type { QueryFn, TxFn } from '../../packages/core/src/audit/audit-log.ts';
 import { EMBEDDING_DIM, EMBEDDING_MODEL, EMBEDDING_VERSION } from '../../packages/core/src/harness/gateway.ts';
 import type { Embedder } from '../../packages/core/src/harness/gateway.ts';
 import { grantAll } from './helpers/grant.ts';
+// This is a pgvector exact-vs-HNSW RECALL test — orthogonal to reranker availability. A constant-high fake
+// reranker keeps it from abstaining (Decision A) in CI where VOYAGE_API_KEY is unset, isolating what it asserts.
+import { constReranker } from './helpers/rerank.ts';
 
 const ADMIN_URL = process.env.SUPABASE_DB_URL;
 const SCRATCH_DB = 'aios_selectivity_lane';
@@ -110,7 +113,7 @@ describe.skipIf(!ADMIN_URL)('#13 selectivity switch + exact perfect recall (real
   });
 
   it('the EXACT path returns the TRUE nearest order (perfect recall over the filtered set)', async () => {
-    const out = await retrieve('zulu', { query, embed, exactMaxRows: 100, transaction, ...grantAll() });
+    const out = await retrieve('zulu', { query, embed, rerank: constReranker(0.99), exactMaxRows: 100, transaction, ...grantAll() });
     expect(out.diagnostics.memories.mode).toBe('exact');
     expect(out.abstained).toBe(false);
     // Items were seeded with descending cosine by index; exact recall returns them in that exact order.
@@ -121,10 +124,10 @@ describe.skipIf(!ADMIN_URL)('#13 selectivity switch + exact perfect recall (real
   });
 
   it('the bounded-count switch routes exact↔HNSW at the threshold, and HNSW runs inside the txn (GUCs apply)', async () => {
-    const exact = await retrieve('zulu', { query, embed, exactMaxRows: 8, transaction, ...grantAll() });
+    const exact = await retrieve('zulu', { query, embed, rerank: constReranker(0.99), exactMaxRows: 8, transaction, ...grantAll() });
     expect(exact.diagnostics.memories.mode).toBe('exact'); // 8 ≤ 8
 
-    const hnsw = await retrieve('zulu', { query, embed, exactMaxRows: 4, transaction, ...grantAll() });
+    const hnsw = await retrieve('zulu', { query, embed, rerank: constReranker(0.99), exactMaxRows: 4, transaction, ...grantAll() });
     expect(hnsw.diagnostics.memories.mode).toBe('hnsw'); // count caps at 5 > 4
     expect(hnsw.abstained).toBe(false);
     expect(hnsw.memories.length).toBeGreaterThan(0); // the txn-scoped iterative_scan/ef_search path returns rows

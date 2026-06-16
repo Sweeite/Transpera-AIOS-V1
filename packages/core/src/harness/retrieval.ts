@@ -1,32 +1,46 @@
 /**
- * Dense retrieval + abstention — the READ half of the M0 tracer (Issue #4, Brief §4.7, §6).
+ * Hybrid retrieval + reranked abstention — the READ half of the harness (Issues #4 → #13 → #14, Brief §4.7, §6).
  *
- * v1 is DENSE-ONLY: embed the query through the gateway chokepoint, cosine-rank `memories`, and either
- * return the best candidate ABOVE the floor or ABSTAIN + log a miss. Abstention is the PRODUCT, not an
- * error path — nothing clears the floor ⇒ empty result + a logged miss, and we NEVER reach down for a weak
- * below-floor match to avoid looking empty (that is the dishonesty most RAG quietly commits, §6).
+ * Embed the query through the gateway chokepoint, run a hybrid dense+keyword search of `memories` and `chunks`
+ * behind a fail-closed permission predicate, fuse with RRF, then score the abstention decision with a
+ * CROSS-ENCODER RERANKER (#14) over the top-N of the fused union. Either return the candidates ABOVE the floor
+ * or ABSTAIN + log a miss. Abstention is the PRODUCT, not an error path — nothing clears the floor ⇒ empty
+ * result + a logged miss; we NEVER reach down for a weak below-floor match to look non-empty (the dishonesty
+ * most RAG quietly commits, §6).
  *
- * ⚠ AUDIT FIX (Tier 2): the abstention score is the TOP-1 PRE-FUSION DENSE COSINE, never an RRF sum. In v1
- *   there is no fusion at all — it is literally the cosine of the nearest candidate. `abstentionScore()` is
- *   the ONE seam #14's reranker swaps (same signature — it already receives the query text it will need),
- *   so no caller of `retrieve()` changes when the reranker drops in (the Watch).
+ * ⚠ AUDIT FIX (Tier 2, #14): the abstention score is the MAX RERANK score over the top-N fused candidates —
+ *   a single CALIBRATED per-candidate score, NEVER an RRF sum (piling on weak candidates cannot raise a max).
+ *   This SUPERSEDES the #4 interim (the pre-fusion dense cosine) with the real calibrated score on the
+ *   reranker's scale (ADR 0003 supersedes ADR 0001's floor). `scoreByReranker()` is the ONE seam that does
+ *   this; `retrieve()`'s external signature is UNCHANGED, so no caller changes (the Watch).
+ *
+ * ⚠ The rerank INPUT is the FUSED UNION (dense ∪ keyword), in RRF order — NOT the dense-only list. That is the
+ *   whole point (#13 deferral closed): a strong KEYWORD-only candidate, below the dense cosine floor, is now
+ *   scored and can clear. One rerank call per query (the Watch). It runs AFTER the DB transaction closes (an
+ *   external HTTP call must not hold a DB connection).
  *
  * #13 (BUILT) — the permission predicate (clearance + namespace) is DERIVED inside retrieve() from the
  *         `principal`'s clearance (rbac.getClearance → buildRetrievalPredicate → retrievalWhereSql(…, 3)) —
  *         there is no caller-supplied predicate (that was the fail-OPEN shape). The fragment numbers from $3
  *         ($1 = vector, $2 = limit). Both legs (dense + keyword) of BOTH stores (memories + chunks) filter in
  *         the WHERE clause BEFORE ranking — never an app-layer post-filter (retrieve-then-filter is the leak).
- *         The HIT/DENY/denyAll behaviour is locked by retrieval-where-seam.test.ts + the #36 leak fixtures.
+ *         A forbidden row therefore never enters the fused set and never reaches the reranker (zero content
+ *         egress, reranker-egress.test.ts). Locked by retrieval-where-seam.test.ts + the #36 leak fixtures.
+ *
+ * DECISION A (reranker unavailable) — ABSTAIN + alert, never the uncalibrated cosine. A provider outage is
+ *         fail-SAFE (honest "I don't know"), observable on `degraded` + the diagnostics span + a loud alert
+ *         sink; it is an OUTAGE, not a knowledge gap, so it logs NO miss (that would teach a false gap).
  *
  * DEFERRED seams (documented, do NOT pre-build):
- *   #14 — a reranker scores top-N; swap the body of `abstentionScore()` and re-derive the floor (different
- *         scale). The floor compare and every caller are untouched.
- *   getConfig — the floor/limit come from `defaultFor()` (the static declared default) until DB-scoped
- *         resolution lands; then `deps.floor ?? await getConfig('retrieval_min_relevance', ns)`.
+ *   #15 — rerank-REORDERING the surfaced set (output stays RRF order here; #14 only changes the FLOOR).
+ *   #24 — chunk-relevance abstention (abstention is memories-only by the #4 decision; chunks are still
+ *         searched + permission-filtered, only the SURFACED output is gated on the memory reranker decision).
+ *   getConfig — floor/limit/top_n come from `defaultFor()` (the static declared default) until DB-scoped
+ *         resolution lands; then `deps.x ?? await getConfig(key, ns)`.
  */
 import { createHash } from 'node:crypto';
 import type { Clearance, Principal, Provenance } from '@aios/shared';
-import { embed as gatewayEmbed, type Embedder } from './gateway.js';
+import { embed as gatewayEmbed, rerank as gatewayRerank, RERANKER_MODEL, type Embedder, type Reranker } from './gateway.js';
 import { defaultFor } from '../config/system-config.js';
 import { getClearance as realGetClearance, buildRetrievalPredicate, retrievalWhereSql } from '../rbac/permissions.js';
 import { underTestRunner, type TxFn } from '../audit/audit-log.js';
@@ -76,8 +90,17 @@ export interface RetrievedChunk {
 export interface MissRecord {
   namespace?: string | null;
   queryHash: string;
-  topScore: number | null; // best below-floor cosine seen; null ⇒ empty candidate set
+  topScore: number | null; // best below-floor RERANK score seen (#14, was cosine); null ⇒ empty candidate set
 }
+
+/** A reranker-unavailable alarm (Decision A). retrieve() ABSTAINS fail-safe on a rerank outage; this fires so
+ *  the degradation is alertable (never a silent uncalibrated answer). refs-only — never the query/doc content. */
+export interface RerankerUnavailable {
+  queryHash: string;
+  namespace?: string | null;
+  reason: string; // the transport/status error message (status-only by construction, §11.10) — never content
+}
+export type RerankerAlert = (info: RerankerUnavailable) => void;
 
 export type MissLogger = (query: QueryFn, miss: MissRecord) => Promise<void>;
 
@@ -94,8 +117,12 @@ export interface RetrieveDeps {
   principal: Principal;
   getClearance?: ClearanceResolver; // injectable; default: rbac.getClearance (the real materialised-row resolver).
   embed?: Embedder; // the #46 chokepoint; injectable for hermetic tests. Default: gateway.embed.
-  floor?: number; // retrieval_min_relevance (bounded key); default: defaultFor(...) — the provisional 0.608.
+  rerank?: Reranker; // the #14 chokepoint; injectable for hermetic tests (the embed-injection precedent). Default: gateway.rerank.
+  floor?: number; // retrieval_min_relevance (bounded key); default: defaultFor(...) — the provisional RERANK floor (#14).
+  rerankerTopN?: number; // reranker_top_n (bounded key); how many fused candidates the one rerank call scores. Default: defaultFor(...).
   maxResults?: number; // retrieval_max_results (bounded key); default: defaultFor(...) — 20.
+  /** Reranker-unavailable alarm (Decision A). Default: a LOUD console.error — never silent. */
+  onRerankerUnavailable?: RerankerAlert;
   exactMaxRows?: number; // exact_search_max_rows (bounded key); ≤ this filtered ⇒ exact path. Injectable for tests.
   /** PROD HNSW path requires a transaction (mirrors appendAudit's prod-needs-a-txn posture): the SET LOCAL
    *  hnsw.iterative_scan / ef_search GUCs that keep a FILTERED HNSW scan from collapsing recall are txn-scoped.
@@ -126,13 +153,17 @@ export interface RetrievalDiagnostics {
   memories: StoreDiagnostics;
   chunks: StoreDiagnostics;
   abstained: boolean;
-  score: number;
+  score: number; // the MAX RERANK score (#14) — the calibrated abstention input, NOT a cosine, NEVER an RRF sum
+  degraded: boolean; // true ⇒ the reranker was unavailable and we abstained fail-safe (Decision A)
+  rerankerModel: string; // the pinned reranker the floor binds to (RERANKER_MODEL) — honest provenance of the score
+  rerankerScores: Array<{ id: string; score: number }>; // per-candidate scores over the top-N (helps #15 context-tightening)
   durationMs: number;
 }
 
 export interface RetrieveOutcome {
   abstained: boolean;
-  score: number; // top-1 PRE-FUSION DENSE COSINE (audit fix) — NEVER an RRF sum
+  score: number; // the MAX RERANK score over the top-N fused candidates (#14) — a CALIBRATED score, NEVER an RRF sum
+  degraded: boolean; // true ⇒ reranker unavailable ⇒ abstained fail-safe (Decision A); the score is not meaningful
   memories: RetrievedMemory[]; // [] when abstained — never a below-floor match
   chunks: RetrievedChunk[]; // permission-filtered identically to memories; [] when abstained
   diagnostics: { memories: StoreDiagnostics; chunks: StoreDiagnostics }; // observability, not just the return value
@@ -147,17 +178,36 @@ function queryHashOf(text: string): string {
 }
 
 /**
- * THE ABSTENTION SCORE — top-1 PRE-FUSION DENSE COSINE (Issue #4 audit fix). NEVER an RRF sum.
+ * THE ABSTENTION SCORE — the MAX RERANK score over the top-N FUSED candidates (Issue #14). NEVER an RRF sum.
  *
- * `ranked` arrives ordered by ascending cosine distance (so `ranked[0]` is the NEAREST = highest cosine).
- * The score is that single best cosine — adding more weak candidates cannot raise it (a sum could, and would
- * silently defeat the floor; that is exactly the bug the audit fix forbids). Empty set ⇒ −∞ (always abstains).
+ * ⚠ This function DOES I/O: it makes ONE cross-encoder rerank call (the gateway chokepoint) per query. It is
+ * async for that reason — the #4 cosine version was pure; this supersedes it. It takes the fused union in RRF
+ * ORDER (`fusedByRrf`), so a keyword-surfaced candidate below the dense cosine floor is included in the top-N
+ * (the #13 deferral closed). The score is the SINGLE best calibrated relevance — adding more weak candidates
+ * cannot raise a max (a sum could, and would silently defeat the floor; the bug the audit fix forbids). Empty
+ * set ⇒ −∞ and NO rerank call (nothing to score, no spend). It returns the per-candidate scores too, so the
+ * caller can record them (honest transparency + #15 context-tightening) without a second pass.
  *
- * This function + the one-line floor compare in `retrieve()` are the SINGLE interface #14 replaces with the
- * reranker. The signature already takes the query text the reranker needs, so callers never change (the Watch).
+ * This function + the one-line floor compare in `retrieve()` are the SINGLE interface that scores abstention;
+ * `retrieve()`'s external signature is unchanged, so no caller changes (the Watch). A rerank failure is thrown
+ * to the caller, which abstains fail-safe (Decision A) — it is NEVER swallowed into a cosine fallback here.
  */
-function abstentionScore(_queryText: string, ranked: RetrievedMemory[]): number {
-  return ranked.length > 0 ? ranked[0]!.cosine : Number.NEGATIVE_INFINITY;
+async function scoreByReranker(
+  queryText: string,
+  fusedByRrf: RetrievedMemory[],
+  rerank: Reranker,
+  topN: number,
+): Promise<{ score: number; perCandidate: Array<{ id: string; score: number }> }> {
+  if (fusedByRrf.length === 0) return { score: Number.NEGATIVE_INFINITY, perCandidate: [] };
+  const top = fusedByRrf.slice(0, Math.max(1, Math.trunc(topN)));
+  const scores = await rerank(queryText, top.map((m) => m.statement));
+  if (scores.length !== top.length) {
+    // Defensive: a reranker that returns the wrong count cannot be trusted to align scores to candidates.
+    throw new Error(`rerank returned ${scores.length} scores for ${top.length} candidates`);
+  }
+  const perCandidate = top.map((m, i) => ({ id: m.id, score: scores[i]! }));
+  const max = perCandidate.reduce((acc, c) => (c.score > acc ? c.score : acc), Number.NEGATIVE_INFINITY);
+  return { score: max, perCandidate };
 }
 
 /** One DB row → RetrievedMemory. `distance` is pgvector `<=>` (cosine DISTANCE); similarity = 1 − distance. */
@@ -194,6 +244,15 @@ function mapChunkRow(r: any): RetrievedChunk {
     cosine: 1 - r.distance,
   };
 }
+
+/** The LOUD default reranker-unavailable alarm (Decision A) — a degraded abstention must be alertable, never
+ *  silent. Refs-only: the reason is a status/transport message (no content by construction, §11.10). */
+const defaultOnRerankerUnavailable: RerankerAlert = (info) => {
+  console.error(
+    `[retrieval] RERANKER UNAVAILABLE — abstained fail-safe (no uncalibrated answer). ` +
+      `ns=${info.namespace ?? 'org'} query=${info.queryHash} reason=${info.reason}`,
+  );
+};
 
 const defaultLogMiss: MissLogger = async (query, miss) => {
   await query(`INSERT INTO retrieval_misses (namespace, query_hash, top_score) VALUES ($1, $2, $3)`, [
@@ -344,9 +403,12 @@ async function searchStore(
 export async function retrieve(queryText: string, deps: RetrieveDeps): Promise<RetrieveOutcome> {
   const startedAt = performance.now();
   const embed = deps.embed ?? gatewayEmbed;
+  const rerank = deps.rerank ?? gatewayRerank;
   const floor = deps.floor ?? (defaultFor('retrieval_min_relevance') as number);
+  const rerankerTopN = deps.rerankerTopN ?? (defaultFor('reranker_top_n') as number);
   const maxResults = deps.maxResults ?? (defaultFor('retrieval_max_results') as number);
   const logMiss = deps.logMiss ?? defaultLogMiss;
+  const onRerankerUnavailable = deps.onRerankerUnavailable ?? defaultOnRerankerUnavailable;
 
   // #13 TRUST BOUNDARY: derive the permission predicate from the principal's clearance — INSIDE retrieve(), never
   // caller-supplied. getClearance fail-closes service/missing/forged to denyClearance() (empty zones AND empty
@@ -389,40 +451,72 @@ export async function retrieve(queryText: string, deps: RetrieveDeps): Promise<R
   const fused: RetrievedMemory[] = mem.rows.map(mapMemoryRow);
   const fusedChunks: RetrievedChunk[] = chk.rows.map(mapChunkRow);
 
-  // ABSTENTION INPUT = the PRE-FUSION DENSE TOP-1 cosine (the #4/#14 contract), NOT the RRF sum. The fused set
-  // is a superset of the dense leg, and the dense leg orders ALL filtered rows by cosine — so the GLOBAL nearest
-  // (max cosine) is always present in `fused`, regardless of how RRF reordered the output. Sorting the fused set
-  // by cosine and taking the top is therefore exactly the pre-fusion dense top-1 (truncation-proof). This sorted
-  // view is the single list the #14 reranker will consume (abstentionScore's signature is unchanged).
-  const denseRanked = [...fused].sort((a, b) => b.cosine - a.cosine);
-  const score = abstentionScore(queryText, denseRanked);
+  // ABSTENTION INPUT = the MAX RERANK score over the top-N of the FUSED UNION in RRF order (#14), NOT the dense
+  // cosine and NEVER an RRF sum. Feeding `fused` (the RRF output, dense ∪ keyword) — not a dense-only list — is
+  // what lets a keyword-surfaced candidate below the dense cosine floor be scored and clear (the #13 deferral).
+  // ONE rerank call per query; it runs HERE, after the DB transaction has closed (an HTTP call must not hold a
+  // DB connection). A rerank failure is caught → ABSTAIN fail-safe + alert (Decision A), never a cosine fallback.
+  let score = Number.NEGATIVE_INFINITY;
+  let rerankerScores: Array<{ id: string; score: number }> = [];
+  let degraded = false;
+  try {
+    const scored = await scoreByReranker(queryText, fused, rerank, rerankerTopN);
+    score = scored.score;
+    rerankerScores = scored.perCandidate;
+  } catch (err) {
+    // Decision A: the reranker is unavailable. We DO NOT answer on the uncalibrated cosine. Abstain fail-safe,
+    // loudly alert (alertable, never silent), and emit a degraded span. An outage is not a knowledge gap, so we
+    // log NO miss (recording one would teach the self-improvement loop a false gap).
+    degraded = true;
+    onRerankerUnavailable({
+      queryHash: queryHashOf(queryText),
+      namespace: clearance.allowedNamespaces[0] ?? null,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+  }
 
-  // Observability (slice 7): emit searchMode + per-leg counts, NOT just the return value. Fired on BOTH paths.
+  // Observability (slice 7): emit searchMode + per-leg counts + the reranker score/model/per-candidate scores
+  // (NOT just the return value). Fired on BOTH the hit and abstain paths, AND on the degraded path.
   const emit = (abstained: boolean) =>
-    deps.onRetrieval?.({ ...diagnostics, abstained, score, durationMs: performance.now() - startedAt });
+    deps.onRetrieval?.({
+      ...diagnostics,
+      abstained,
+      score,
+      degraded,
+      rerankerModel: RERANKER_MODEL,
+      rerankerScores,
+      durationMs: performance.now() - startedAt,
+    });
+
+  if (degraded) {
+    emit(true);
+    return { abstained: true, score, degraded: true, memories: [], chunks: [], diagnostics };
+  }
 
   if (score < floor) {
     // ABSTAIN — the product. Record the miss (learning signal, §6) and return EMPTY: we never surface the
     // weak below-floor candidate just to look non-empty. `score` is still returned for honest transparency.
     await logMiss(deps.query, {
       queryHash: queryHashOf(queryText),
-      topScore: denseRanked.length > 0 ? denseRanked[0]!.cosine : null,
+      topScore: rerankerScores.length > 0 ? score : null, // best below-floor RERANK score seen (null ⇒ empty set)
     });
     // Abstention is the PRODUCT: we surface NOTHING (memories AND chunks) once we've declared we don't know.
-    // Abstention is memories-only by decision (the dense top-1 cosine, #4 contract); a chunk-relevance floor /
-    // chunks-influence-abstention is a forward #14/#24 refinement (recorded). Both stores are still SEARCHED
-    // above (diagnostics populated, the chunk filter exercised) — only the surfaced output is gated here.
+    // Abstention is memories-only by decision (the #4 contract); chunk-relevance abstention is the forward #24
+    // refinement (recorded). Both stores are still SEARCHED above (diagnostics populated, the chunk filter
+    // exercised) — only the surfaced output is gated here.
     emit(true);
-    return { abstained: true, score, memories: [], chunks: [], diagnostics };
+    return { abstained: true, score, degraded: false, memories: [], chunks: [], diagnostics };
   }
 
   emit(false);
 
-  // Output: each store's RRF-ordered set, capped at maxResults. The dense leg already bounded candidates; each
-  // fused set is ≤ 2·maxResults, sliced here to the final cap (already in rrf-desc order from the query).
+  // Output: each store's RRF-ordered set, capped at maxResults (rerank-REORDERING the surfaced set is the #15
+  // refinement — #14 only changes the FLOOR, not the output order). The dense leg already bounded candidates;
+  // each fused set is ≤ 2·maxResults, sliced here to the final cap (already in rrf-desc order from the query).
   return {
     abstained: false,
     score,
+    degraded: false,
     memories: fused.slice(0, maxResults),
     chunks: fusedChunks.slice(0, maxResults),
     diagnostics,

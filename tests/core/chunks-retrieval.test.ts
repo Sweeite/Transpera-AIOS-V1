@@ -12,6 +12,7 @@ import { EMBEDDING_DIM, EMBEDDING_MODEL, EMBEDDING_VERSION } from '../../package
 import type { Embedder } from '../../packages/core/src/harness/gateway.ts';
 import { retrieve } from '../../packages/core/src/harness/retrieval.ts';
 import { TEST_USER } from './helpers/grant.ts';
+import { constReranker } from './helpers/rerank.ts';
 
 const E0 = (() => {
   const v = new Array<number>(EMBEDDING_DIM).fill(0);
@@ -59,7 +60,7 @@ describe('#13 chunks — searched + filtered identically to memories', () => {
     // Cleared for general/org up to s2 only.
     const out = await retrieve('q', {
       query,
-      embed: fixedEmbedder(E0),
+      embed: fixedEmbedder(E0), rerank: constReranker(0.99),
       ...withClearance({ allowedZones: ['general'], maxSensitivity: 2, allowedNamespaces: ['org'] }),
     });
 
@@ -79,7 +80,7 @@ describe('#13 chunks — searched + filtered identically to memories', () => {
 
     const out = await retrieve('q', {
       query,
-      embed: fixedEmbedder(E0),
+      embed: fixedEmbedder(E0), rerank: constReranker(0.99),
       ...withClearance({ allowedZones: [], maxSensitivity: 5, allowedNamespaces: [] }),
     });
 

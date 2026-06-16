@@ -1,0 +1,33 @@
+{
+  "_comment": "SHAPE ONLY (Issue #14). The real de-identified pairs.json is gitignored. See SCHEMA.md. goldIndices:[] marks a no-answer query (the floor's lower guard).",
+  "pairs": [
+    {
+      "name": "acme-reporting-cadence",
+      "query": "How often does Acme want to be updated?",
+      "candidates": [
+        "Acme prefers monthly reporting, delivered async.",
+        "Northwind wants weekly check-ins.",
+        "The kickoff deck template lives in the shared drive."
+      ],
+      "goldIndices": [0]
+    },
+    {
+      "name": "near-duplicate-opposite",
+      "query": "What is Acme's reporting cadence?",
+      "candidates": [
+        "Acme prefers weekly reporting.",
+        "Acme prefers monthly reporting, delivered async."
+      ],
+      "goldIndices": [1]
+    },
+    {
+      "name": "unknown-abstains",
+      "query": "What is Acme's founder's dog's name?",
+      "candidates": [
+        "Acme prefers monthly reporting, delivered async.",
+        "Acme's HQ is in Leeds."
+      ],
+      "goldIndices": []
+    }
+  ]
+}

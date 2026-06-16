@@ -15,6 +15,15 @@ export type TaskClass = 'classify' | 'summarise' | 'extract' | 'reason' | 'synth
  */
 export type Embedder = (texts: string[]) => Promise<number[][]>;
 
+/**
+ * A function that scores each document's relevance to a query — the cross-encoder reranker (#14). `rerank`
+ * (below) is the ONLY producer in production; this type is exported so the read path (harness/retrieval) can
+ * inject a deterministic stand-in in hermetic tests, exactly like `Embedder`. Returns one score per document,
+ * IN INPUT ORDER (parallel to how `embed` returns one vector per input). The score is the calibrated
+ * abstention floor input (ADR 0003) — a DIFFERENT scale from the dense cosine it supersedes.
+ */
+export type Reranker = (query: string, documents: string[]) => Promise<number[]>;
+
 export interface CallOptions<T = string> {
   taskClass: TaskClass; // drives Anthropic-tier routing (Haiku→Sonnet→Opus), quality-gated by eval fixtures (#32)
   system?: string; // stable prefix → prompt-cached (cache_control on the system block; ~0.1× on cache-read tokens, §5.3)
@@ -559,6 +568,89 @@ export async function embed(texts: string[]): Promise<number[][]> {
   }
   return vectors;
 }
+
+/**
+ * The cross-encoder RERANKER — the SECOND pinned provider call (after `embed`), and the second place the #46
+ * chokepoint owns. It scores the top-N FUSED candidates against the query; the max score is the calibrated
+ * abstention floor (#14, Brief §4.7). Like `embed` it is PINNED and NEVER cost-routed (a reranker swap =
+ * re-calibrate the floor, ADR 0003), speaks raw REST (no SDK → #46 stays green), and fails LOUD with
+ * STATUS-ONLY errors — the documents (memory statements) are NEVER echoed into an error or log (§11.10).
+ *
+ * Returns one relevance score per document, in INPUT ORDER. The caller (retrieve) passes ONLY the documents a
+ * principal is authorized to see — the permission predicate already filtered both legs (#13), so a forbidden
+ * statement never reaches this call (proved by reranker-egress.test.ts). One call per query (the Watch).
+ */
+export async function rerank(query: string, documents: string[]): Promise<number[]> {
+  if (documents.length === 0) return []; // nothing to score — no provider call
+  const apiKey = process.env.VOYAGE_API_KEY;
+  if (!apiKey) {
+    throw new Error('VOYAGE_API_KEY is not set — the reranker cannot run (fail loud, never a silent uncalibrated answer).');
+  }
+
+  const timeoutMs = defaultFor('reranker_timeout_ms') as number;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(VOYAGE_RERANK_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      // return_documents:false — we only need the scores; never ask the provider to echo the documents back.
+      body: JSON.stringify({ model: RERANKER_MODEL, query, documents, return_documents: false }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (controller.signal.aborted) {
+      throw new Error(`rerank: request timed out after ${timeoutMs}ms`); // no content — just the timeout
+    }
+    throw new Error(`rerank: network error (${String(e)})`); // String(e) is the transport error, never a document
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok) {
+    // Status ONLY — a 4xx body can echo our request payload (the documents = memory statements) back, and this
+    // message is surfaced by the default alert sink (console.error), so the body must never enter it (§11.10).
+    // Drain+discard the body to free the socket; do NOT read it into the error.
+    await res.text().catch(() => '');
+    throw new Error(`rerank failed: ${res.status} ${res.statusText}`);
+  }
+
+  const json = (await res.json()) as { data?: Array<{ index: number; relevance_score: number }> };
+  const data = json.data ?? [];
+  if (data.length !== documents.length) {
+    throw new Error(`rerank returned ${data.length} scores for ${documents.length} documents`);
+  }
+  // Voyage returns results that may be sorted by score; re-key by `index` so scores align to INPUT order
+  // (defensively, exactly as embed() sorts by index) — a pairing bug here would mis-score the wrong document.
+  const scores = new Array<number>(documents.length);
+  for (const d of data) {
+    if (!Number.isInteger(d.index) || d.index < 0 || d.index >= documents.length) {
+      throw new Error(`rerank returned an out-of-range index ${d.index} for ${documents.length} documents`);
+    }
+    if (typeof d.relevance_score !== 'number' || !Number.isFinite(d.relevance_score)) {
+      throw new Error(`rerank returned a non-finite relevance_score at index ${d.index}`);
+    }
+    scores[d.index] = d.relevance_score;
+  }
+  for (let i = 0; i < scores.length; i++) {
+    if (scores[i] === undefined) throw new Error(`rerank returned no score for document ${i}`);
+  }
+  return scores;
+}
+
+const VOYAGE_RERANK_URL = 'https://api.voyageai.com/v1/rerank';
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// ⚠ PROVISIONAL RERANKER PIN (#14, ADR 0003) — NOT VALIDATED on real data. The MODEL is the vendor we send
+//   memory statements to (a new content subprocessor, ADR 0003 §subprocessor); the floor it binds is in
+//   system-config (`retrieval_min_relevance`). Changing EITHER value = re-calibrate the floor (the tripwire).
+//   It is a CONSTANT (not a system_config key): a model name is not a threshold/weight/floor (so it sits
+//   outside the §4.8 config red line), and EMBEDDING_MODEL is the precedent — a pin lives in code + an ADR,
+//   never a per-namespace-overridable row (which could silently diverge from the floor it was calibrated on).
+//   Real model + floor decided at first-client onboarding (#43), on the shipped representation. ⚠
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+export const RERANKER_MODEL = 'rerank-2.5-lite'; // Voyage; provisional (#14) — cheap (the Watch), real pin → #43
+export const RERANKER_VERSION = '0-provisional'; // leading-0 = NOT the validated pin; bumped at first-client (#43)
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 // ⚠⚠⚠ PROVISIONAL EMBEDDING PIN — NOT VALIDATED. DO NOT TREAT AS THE FINAL ONE-WAY-DOOR DECISION. ⚠⚠⚠

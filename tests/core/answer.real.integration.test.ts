@@ -1,9 +1,12 @@
 /**
  * Issue #5 — TRUE end-to-end with the REAL providers (key-gated, normally skipped in CI/local).
  *
- * Runs ONLY when BOTH keys are present: OPENAI_API_KEY (the pinned embedder) + ANTHROPIC_API_KEY (the Haiku
- * 4.5 synthesis). Exercises the genuine path the hermetic tests stub: real embeddings clear the real floor,
- * real forced-tool-use returns structured cited claims, and the structural guard runs over them.
+ * Runs ONLY when ALL THREE keys are present: OPENAI_API_KEY (the pinned embedder) + VOYAGE_API_KEY (the #14
+ * pinned reranker — the abstention floor) + ANTHROPIC_API_KEY (the Haiku 4.5 synthesis). Exercises the genuine
+ * path the hermetic tests stub: real embeddings surface candidates, the real reranker clears/abstains the
+ * floor, real forced-tool-use returns structured cited claims, and the structural guard runs over them.
+ * VOYAGE is in the gate EXPLICITLY (#14): retrieve() now calls the real reranker, so without the key this path
+ * would go degraded-and-abstain — gating skips it cleanly rather than run-and-fail (the #14 lesson).
  *
  *   node --env-file=.env node_modules/.bin/vitest run tests/core/answer.real.integration.test.ts
  *
@@ -16,7 +19,8 @@ import { ingestSop } from '../../packages/core/src/memory/store.ts';
 import { answerQuestion } from '../../packages/core/src/harness/synthesis.ts';
 import { grantAll } from './helpers/grant.ts';
 
-const HAVE_KEYS = !!process.env.OPENAI_API_KEY && !!process.env.ANTHROPIC_API_KEY;
+const HAVE_KEYS =
+  !!process.env.OPENAI_API_KEY && !!process.env.VOYAGE_API_KEY && !!process.env.ANTHROPIC_API_KEY;
 const SOP =
   'To onboard a new client: 1) create the workspace, 2) invite the client team, 3) book the kickoff within 5 business days, 4) send the welcome pack.';
 
